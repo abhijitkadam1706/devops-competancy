@@ -29,7 +29,7 @@ resource "aws_security_group" "alb" {
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
-    description = "HTTP — redirects to HTTPS (no content served)"
+    description = "HTTP - redirects to HTTPS (no content served)"
   }
 
   egress {
