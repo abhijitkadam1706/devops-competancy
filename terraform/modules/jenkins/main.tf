@@ -45,7 +45,7 @@ resource "tls_private_key" "jenkins_agent_ssh" {
 # Jenkins Master will read this from SSM to configure SSH credentials
 resource "aws_ssm_parameter" "jenkins_ssh_private_key" {
   name        = "/${var.cluster_name}/jenkins/agent-ssh-private-key"
-  description = "Jenkins agent SSH private key — used by Master to SSH into agents"
+  description = "Jenkins agent SSH private key - used by Master to SSH into agents"
   type        = "SecureString"
   value       = tls_private_key.jenkins_agent_ssh.private_key_pem
 
@@ -58,7 +58,7 @@ resource "aws_ssm_parameter" "jenkins_ssh_private_key" {
 # ── Security Group: Jenkins Master ────────────────────────────────────────────
 resource "aws_security_group" "jenkins_master_sg" {
   name        = "${var.cluster_name}-jenkins-master-sg"
-  description = "Jenkins Master Controller — allow UI (8080) and JNLP agent port (50000)"
+  description = "Jenkins Master Controller - allow UI (8080) and JNLP agent port (50000)"
   vpc_id      = var.vpc_id
 
   # Jenkins UI — restrict this to your office/VPN CIDR in production
@@ -101,7 +101,7 @@ resource "aws_security_group" "jenkins_master_sg" {
 #   - Outbound to master JNLP port and internet (ECR, GitHub)
 resource "aws_security_group" "jenkins_agent_sg" {
   name        = "${var.cluster_name}-jenkins-agent-sg"
-  description = "Jenkins Agent nodes — SSH from master only"
+  description = "Jenkins Agent nodes - SSH from master only"
   vpc_id      = var.vpc_id
 
   ingress {

@@ -13,7 +13,7 @@
 # ── Security Group — HTTPS only, no SSH, no HTTP ─────────────────────────────
 resource "aws_security_group" "alb" {
   name        = "${var.cluster_name}-alb-sg"
-  description = "ALB security group — public HTTPS only"
+  description = "ALB security group - public HTTPS only"
   vpc_id      = var.vpc_id
 
   ingress {

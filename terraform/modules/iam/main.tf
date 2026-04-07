@@ -39,7 +39,7 @@ locals {
 # ─────────────────────────────────────────────────────────────────────────────
 resource "aws_iam_role" "jenkins_master" {
   name               = "${var.cluster_name}-jenkins-master"
-  description        = "Jenkins Master Controller — SSM access + read agent SSH key"
+  description        = "Jenkins Master Controller - SSM access + read agent SSH key"
   assume_role_policy = local.ec2_assume_role_policy
   tags               = { Name = "${var.cluster_name}-jenkins-master", Role = "jenkins-master" }
 }
@@ -77,7 +77,7 @@ resource "aws_iam_instance_profile" "jenkins_master" {
 # ─────────────────────────────────────────────────────────────────────────────
 resource "aws_iam_role" "jenkins_build_agent" {
   name               = "${var.cluster_name}-jenkins-build-agent"
-  description        = "Jenkins build-agent — Node.js build, lint, GitOps commit"
+  description        = "Jenkins build-agent - Node.js build, lint, GitOps commit"
   assume_role_policy = local.ec2_assume_role_policy
   tags               = { Name = "${var.cluster_name}-jenkins-build-agent", AgentLabel = "build-agent" }
 }
@@ -115,7 +115,7 @@ resource "aws_iam_instance_profile" "jenkins_build_agent" {
 # ─────────────────────────────────────────────────────────────────────────────
 resource "aws_iam_role" "jenkins_security_agent" {
   name               = "${var.cluster_name}-jenkins-security-agent"
-  description        = "Jenkins security-agent — Kaniko build + ECR push + Trivy scan"
+  description        = "Jenkins security-agent - Kaniko build + ECR push + Trivy scan"
   assume_role_policy = local.ec2_assume_role_policy
   tags               = { Name = "${var.cluster_name}-jenkins-security-agent", AgentLabel = "security-agent" }
 }
@@ -168,7 +168,7 @@ resource "aws_iam_instance_profile" "jenkins_security_agent" {
 # ─────────────────────────────────────────────────────────────────────────────
 resource "aws_iam_role" "jenkins_test_agent" {
   name               = "${var.cluster_name}-jenkins-test-agent"
-  description        = "Jenkins test-agent — Docker test networks, Newman API tests, ZAP DAST"
+  description        = "Jenkins test-agent - Docker test networks, Newman API tests, ZAP DAST"
   assume_role_policy = local.ec2_assume_role_policy
   tags               = { Name = "${var.cluster_name}-jenkins-test-agent", AgentLabel = "test-agent" }
 }

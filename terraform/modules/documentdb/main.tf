@@ -26,7 +26,7 @@ resource "aws_docdb_subnet_group" "main" {
 # ── Security Group — Only allows access from EKS nodes, NO internet ──────────
 resource "aws_security_group" "docdb" {
   name        = "${var.cluster_identifier}-docdb-sg"
-  description = "DocumentDB security group — VPC internal only"
+  description = "DocumentDB security group - VPC internal only"
   vpc_id      = var.vpc_id
 
   ingress {
