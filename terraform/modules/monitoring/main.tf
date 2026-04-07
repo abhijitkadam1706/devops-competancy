@@ -1,7 +1,9 @@
 # =============================================================================
-# Monitoring Module — CloudWatch Alarms + SNS + Prometheus Integration
+# Monitoring Module - CloudWatch Alarms + SNS + Prometheus Integration
 # Maps to existing prometheus/prometheus-config.yaml in the repo
 # =============================================================================
+
+data "aws_region" "current" {}
 
 # ── SNS Topic for Alerts ──────────────────────────────────────────────────────
 resource "aws_sns_topic" "alerts" {
@@ -105,6 +107,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title   = "EKS Node CPU"
+          region  = data.aws_region.current.name
           metrics = [["ContainerInsights", "node_cpu_utilization", "ClusterName", var.cluster_name]]
           period  = 300
           view    = "timeSeries"
@@ -118,6 +121,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title   = "App 5xx Error Rate"
+          region  = data.aws_region.current.name
           metrics = [["AWS/ApplicationELB", "5xxErrorRate"]]
           period  = 60
           view    = "timeSeries"
@@ -131,6 +135,7 @@ resource "aws_cloudwatch_dashboard" "main" {
         height = 6
         properties = {
           title   = "DocumentDB CPU"
+          region  = data.aws_region.current.name
           metrics = [["AWS/DocDB", "CPUUtilization", "DBClusterIdentifier", var.docdb_cluster_id]]
           period  = 300
           view    = "timeSeries"
