@@ -1,0 +1,173 @@
+# =============================================================================
+# PROJECT      : mern-auth — Full-Stack Authentication Application
+# FILE         : cluster-config.yaml
+# DESCRIPTION  : Amazon EKS Cluster Configuration (eksctl)
+#                Multi-tenant cluster hosting: Jenkins CI/CD, SonarQube,
+#                Prometheus, and mern-auth staging + production workloads.
+#
+# AWS REGION   : ap-southeast-1 (Singapore)
+# CLUSTER NAME : mern-auth-cluster
+# K8S VERSION  : 1.32              (latest stable — 1.29 is EOL)
+# MANAGED BY   : DevOps Engineering Team
+# CONTROLS     : PRCICD-001 (Release Workflows) | PRCICD-002 (Build/Test)
+# VERSION      : 2.0.0
+# LAST UPDATED : 2026-04-03
+#
+# NODE CAPACITY DESIGN:
+#   EKS Worker Nodes = EC2 instances that JOIN the Kubernetes cluster
+#   Jenkins Slaves   = Kubernetes PODS that Jenkins creates on-demand inside the cluster
+#   These are DIFFERENT things:
+#     - 5 EKS worker nodes (t3.large EC2 instances, always running)
+#     - 1 Jenkins Master pod (permanent, runs on a worker node)
+#     - 4 Jenkins Slave pods (ephemeral — spun up per pipeline stage, then deleted)
+#     - SonarQube pod   (permanent)
+#     - Prometheus stack (permanent)
+#     - mern-auth app   (staging + production deployments)
+#
+# USAGE:
+#   eksctl create cluster -f cluster-config.yaml
+#   eksctl delete cluster -f cluster-config.yaml   (teardown)
+# =============================================================================
+
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cluster Metadata
+# Tags applied to ALL AWS resources created by this config (EC2, VPC, SGs, etc.)
+# ─────────────────────────────────────────────────────────────────────────────
+metadata:
+  name:    mern-auth-cluster
+  region:  ap-southeast-1       # Singapore — selected deployment region
+  version: "1.32"              # K8s 1.32 — latest stable (1.29 is EOL as of 2026)
+  tags:
+    Project:      mern-auth
+    ManagedBy:    DevOps
+    CostCenter:   engineering
+    Environment:  multi-tenant  # hosts staging + production + cicd in separate namespaces
+    Owner:        devops-team
+    CreatedBy:    eksctl
+    Purpose:      cicd-and-application-runtime
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VPC Configuration
+# Creates a dedicated VPC with public and private subnets.
+# Public  subnets → load balancers (Jenkins LB, Ingress)
+# Private subnets → worker nodes (no direct internet access — security best practice)
+# ─────────────────────────────────────────────────────────────────────────────
+vpc:
+  cidr: 10.0.0.0/16
+  clusterEndpoints:
+    publicAccess:  true    # kubectl from workstation
+    privateAccess: true    # pod-to-apiserver (faster, doesn't leave AZ)
+  # NAT gateway for private-subnet nodes to reach internet (ECR, GitHub)
+  nat:
+    gateway: Single        # Use HighlyAvailable in production (3 NAT gateways)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Managed Node Groups
+# AWS manages node lifecycle, OS patches, and K8s upgrades for managed groups.
+# ─────────────────────────────────────────────────────────────────────────────
+managedNodeGroups:
+
+  # ── General Workload Node Group ─────────────────────────────────────────────
+  # PURPOSE : Hosts ALL workloads — Jenkins Master + Slave pods + apps + monitoring
+  #
+  # CAPACITY BREAKDOWN (why 5 nodes):
+  #   Each t3.large = 2 vCPU, 8 GiB RAM
+  #   5 nodes total = 10 vCPU, 40 GiB RAM (minus ~20% K8s system overhead)
+  #   Available    ≈ 8 vCPU, 32 GiB RAM for workloads
+  #
+  #   Permanent pods (always running):
+  #     Jenkins Master pod      : 2 CPU, 4 GiB
+  #     SonarQube pod           : 2 CPU, 4 GiB
+  #     Prometheus + Grafana    : 1 CPU, 2 GiB
+  #     mern-auth staging       : 0.5 CPU, 512 MiB
+  #     mern-auth production    : 0.5 CPU, 512 MiB
+  #     Subtotal permanent      ≈ 6 CPU, 11 GiB
+  #
+  #   Ephemeral Jenkins Slave pods (4 pods, one active at a time per pipeline stage):
+  #     build-agent pod         : 3 CPU, 3 GiB  (node + sonar-scanner)
+  #     security-agent pod      : 4 CPU, 5 GiB  (node + docker-dind + trivy + python)
+  #     test-agent pod          : 4 CPU, 6 GiB  (newman + zap + docker-dind)
+  #     deploy-agent pod        : 1 CPU, 1 GiB  (kubectl + helm + monitoring-tools)
+  #     Peak slave (security)   ≈ 4 CPU, 5 GiB
+  #                                              ─────────────────────
+  #   TOTAL PEAK               ≈ 10 CPU, 16 GiB → fits in 5 × t3.large ✅
+  # ────────────────────────────────────────────────────────────────────────────
+  - name:            mern-auth-general
+    instanceType:    t3.large     # 2 vCPU, 8 GiB — upgraded from t3.medium for slave headroom
+    minSize:         3            # Minimum HA — one node always per AZ
+    maxSize:         8            # Cluster Autoscaler max (for burst builds)
+    desiredCapacity: 5            # 5 nodes covers all permanent + 1 active slave simultaneously
+    volumeSize:      30           # 30 GiB EBS per node (OS + container images)
+    volumeType:      gp3          # gp3 is faster and cheaper than gp2
+    availabilityZones:
+      - ap-southeast-1a
+      - ap-southeast-1b
+      - ap-southeast-1c
+    # K8s labels applied to ALL nodes in this group
+    labels:
+      role:        general
+      project:     mern-auth
+      managed-by:  devops
+    # AWS tags on EC2 instances AND EBS volumes
+    tags:
+      Project:     mern-auth
+      ManagedBy:   DevOps
+      CostCenter:  engineering
+      NodeRole:    general
+      # Cluster Autoscaler discovery tags
+      k8s.io/cluster-autoscaler/enabled:              "true"
+      k8s.io/cluster-autoscaler/mern-auth-cluster:    "owned"
+    # SSH access (optional — use AWS SSM Session Manager instead for zero-trust)
+    ssh:
+      enableSsm: true    # Access nodes via AWS Systems Manager — no SSH key needed
+    # IAM policies attached to node instance role
+    iam:
+      attachPolicyARNs:
+        # Core EKS permissions
+        - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        # ECR — pull images from both stage and prod repositories
+        - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        # SSM — remote access without SSH bastion
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Add-ons
+# AWS-managed add-ons handle updates and patching automatically
+# ─────────────────────────────────────────────────────────────────────────────
+addons:
+  # VPC-native pod networking
+  - name:    vpc-cni
+    version:  latest
+  # DNS resolution inside the cluster
+  - name:    coredns
+    version:  latest
+  # kube-proxy for service traffic routing
+  - name:    kube-proxy
+    version:  latest
+  # EBS CSI driver — required for PersistentVolumeClaims (Jenkins home, SonarQube, Prometheus)
+  - name:    aws-ebs-csi-driver
+    version:  latest
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CloudWatch Logging
+# Capture control plane logs for audit and incident investigation
+# ─────────────────────────────────────────────────────────────────────────────
+cloudWatch:
+  clusterLogging:
+    enableTypes:
+      - api           # API server audit log — who called what
+      - audit         # K8s audit log — RBAC and resource changes
+      - authenticator # Authentication events
+      - controllerManager
+      - scheduler
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IAM — OIDC provider for pod-level IAM (IRSA)
+# Allows individual pods to assume IAM roles — zero static credentials
+# ─────────────────────────────────────────────────────────────────────────────
+iam:
+  withOIDC: true    # Enable IRSA — required for EBS CSI driver

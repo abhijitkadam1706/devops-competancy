@@ -1,0 +1,57 @@
+# Files to never commit to Git
+# ============================================================
+
+# --- SECRETS & CREDENTIALS (NEVER commit these) ---
+.env
+.env.*
+*.env
+secrets.tfvars
+*.secret.tfvars
+
+# --- TERRAFORM STATE (use S3 remote backend instead) ---
+*.tfstate
+*.tfstate.backup
+.terraform/
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+
+# --- NODE.JS (application dependencies, too large for Git) ---
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- BUILD ARTIFACTS ---
+dist/
+build/
+*.log
+
+# --- OS GENERATED FILES ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- LARGE BINARY / DOCUMENT FILES (not needed in code repo) ---
+*.pdf
+*.docx
+*.xlsx
+*.pptx
+*.png
+*.jpg
+*.jpeg
+*.gif
+# Keep the CI/CD architecture diagram if needed:
+# !cicd_architecture_final.png
+
+# --- TEMPORARY / SCRATCH FILES ---
+gen_diagram.py
+gen_docx.py
+*.txt
+
+# --- PYTHON CACHE ---
+__pycache__/
+*.pyc

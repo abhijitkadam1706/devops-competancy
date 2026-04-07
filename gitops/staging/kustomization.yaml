@@ -1,0 +1,28 @@
+# =====================================================================
+# Staging Overlay — ArgoCD syncs this to mern-auth-staging namespace
+# Jenkins updates the 'newTag' field below via kustomize edit set image
+# =====================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mern-auth-staging
+
+bases:
+  - ../base
+
+commonLabels:
+  environment: staging
+
+# ── Image tag — Jenkins CI updates this line automatically ───────────
+images:
+  - name: mern-auth
+    newName: 203848753188.dkr.ecr.ap-southeast-1.amazonaws.com/mern-auth/stage
+    newTag: latest  # UPDATED BY JENKINS CI PIPELINE
+
+# ── Staging-specific patches ─────────────────────────────────────────
+patchesStrategicMerge:
+  - staging-patch.yaml
+
+replicas:
+  - name: mern-auth
+    count: 2

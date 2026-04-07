@@ -1,0 +1,246 @@
+---
+# =====================================================================
+# Prometheus Configuration — mern-auth CI/CD Monitoring
+# Scrapes: Jenkins Master | K8s apps | Node exporters
+# Alerts: Error rate > 5% triggers auto-rollback in Jenkinsfile Stage 12
+# =====================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval:     15s
+      evaluation_interval: 15s
+      external_labels:
+        cluster: mern-auth-cicd
+        environment: production
+
+    # Alerting rules path
+    rule_files:
+      - "/etc/prometheus/rules/*.yml"
+
+    # Alertmanager endpoint (Slack/email notifications)
+    alerting:
+      alertmanagers:
+        - static_configs:
+            - targets: ["alertmanager:9093"]
+
+    scrape_configs:
+
+      # --- Jenkins Master metrics (Prometheus plugin) ---
+      - job_name: jenkins
+        metrics_path: /prometheus
+        static_configs:
+          - targets: ["jenkins-master-svc.cicd:8080"]
+            labels:
+              app: jenkins
+
+      # --- mern-auth application (staging) ---
+      - job_name: mern-auth-staging
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["mern-auth.mern-auth-staging:9191"]
+            labels:
+              app:         mern-auth
+              environment: staging
+
+      # --- mern-auth application (production) ---
+      - job_name: mern-auth-production
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["mern-auth-prod.mern-auth-production:9191"]
+            labels:
+              app:         mern-auth
+              environment: production
+
+      # --- Kubernetes nodes (node-exporter) ---
+      - job_name: kubernetes-nodes
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - action: labelmap
+            regex: __meta_kubernetes_node_label_(.+)
+
+      # --- Kubernetes pods (auto-discovery) ---
+      - job_name: kubernetes-pods
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: "true"
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+          - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+            action: replace
+            regex: ([^:]+)(?::\d+)?;(\d+)
+            replacement: $1:$2
+            target_label: __address__
+---
+# =====================================================================
+# Prometheus Alert Rules — PRCICD-001 production health gates
+# =====================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-alert-rules
+  namespace: monitoring
+data:
+  mern-auth-alerts.yml: |
+    groups:
+      - name: mern-auth-production
+        interval: 30s
+        rules:
+
+          # Error rate > 5% for 2 min → triggers Jenkinsfile auto-rollback
+          - alert: HighErrorRate
+            expr: |
+              rate(http_requests_total{status=~"5..", app="mern-auth", environment="production"}[1m])
+              /
+              rate(http_requests_total{app="mern-auth", environment="production"}[1m])
+              * 100 > 5
+            for: 2m
+            labels:
+              severity: critical
+              team:     devops
+            annotations:
+              summary:     "mern-auth production error rate exceeded 5%"
+              description: "Error rate is {{ $value | humanizePercentage }}. Auto-rollback initiated."
+
+          # P99 latency > 2 s
+          - alert: HighLatency
+            expr: |
+              histogram_quantile(0.99,
+                rate(http_request_duration_seconds_bucket{app="mern-auth", environment="production"}[5m])
+              ) > 2
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "mern-auth P99 latency > 2s in production"
+              description: "P99 = {{ $value | humanizeDuration }}"
+
+          # Pod unavailability
+          - alert: PodDown
+            expr: |
+              kube_deployment_status_replicas_unavailable{
+                deployment=~"mern-auth.*",
+                namespace=~"mern-auth-production"
+              } > 0
+            for: 1m
+            labels:
+              severity: critical
+            annotations:
+              summary: "mern-auth production pod(s) unavailable"
+              description: "{{ $value }} replica(s) unavailable in deployment {{ $labels.deployment }}"
+
+          # Jenkins build queue depth
+          - alert: JenkinsBuildQueueSaturated
+            expr: jenkins_queue_size_value > 10
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Jenkins build queue > 10 — agents may be exhausted"
+---
+# =====================================================================
+# Prometheus Deployment
+# =====================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus-sa
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.51.2
+          args:
+            - "--config.file=/etc/prometheus/prometheus.yml"
+            - "--storage.tsdb.path=/prometheus"
+            - "--storage.tsdb.retention.time=15d"
+            - "--web.enable-lifecycle"
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: prometheus-config
+              mountPath: /etc/prometheus
+            - name: prometheus-rules
+              mountPath: /etc/prometheus/rules
+            - name: prometheus-storage
+              mountPath: /prometheus
+          resources:
+            requests: { cpu: "250m", memory: "512Mi" }
+            limits:   { cpu: "1",    memory: "2Gi" }
+      volumes:
+        - name: prometheus-config
+          configMap:
+            name: prometheus-config
+        - name: prometheus-rules
+          configMap:
+            name: prometheus-alert-rules
+        - name: prometheus-storage
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus-sa
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus-cluster-role
+rules:
+  - apiGroups: [""]
+    resources: [nodes, nodes/metrics, services, endpoints, pods]
+    verbs:     [get, list, watch]
+  - apiGroups: [extensions, networking.k8s.io]
+    resources: [ingresses]
+    verbs:     [get, list, watch]
+  - nonResourceURLs: [/metrics, /metrics/cadvisor]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus-cluster-role-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind:      ClusterRole
+  name:      prometheus-cluster-role
+subjects:
+  - kind:      ServiceAccount
+    name:      prometheus-sa
+    namespace: monitoring

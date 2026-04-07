@@ -1,0 +1,60 @@
+# BLUE deployment — current stable (receives traffic by default)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mern-auth-blue
+  labels:
+    app: mern-auth
+    slot: blue
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: mern-auth
+      slot: blue
+  template:
+    metadata:
+      labels:
+        app: mern-auth
+        slot: blue
+        environment: production
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9191"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: mern-auth
+          image: mern-auth:latest  # Patched by Kustomize
+          ports:
+            - containerPort: 9191
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: "9191"
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mern-auth-prod-secrets
+                  key: mongodb-uri
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mern-auth-prod-secrets
+                  key: jwt-secret
+          resources:
+            requests: { cpu: "250m", memory: "256Mi" }
+            limits:   { cpu: "1",    memory: "1Gi"   }
+          livenessProbe:
+            httpGet: { path: /api/user, port: 9191 }
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /api/user, port: 9191 }
+            initialDelaySeconds: 15
+            periodSeconds: 5

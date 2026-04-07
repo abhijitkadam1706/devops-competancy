@@ -1,0 +1,40 @@
+# =============================================================================
+# Terraform .gitignore
+# Prevents secrets and local state from being accidentally committed to Git
+# =============================================================================
+
+# Local state files — never commit these, use S3 remote state instead
+*.tfstate
+*.tfstate.backup
+.terraform/
+
+# Crash dump files
+crash.log
+crash.*.log
+
+# Override files — local developer overrides, not for team sharing
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Variable files that might contain secrets
+# DO commit terraform.tfvars (our files contain NO secrets by design)
+# If you add a file with secrets, add it here:
+# secrets.tfvars
+# *.secret.tfvars
+
+# Terraform plan files — can contain sensitive data in binary form
+*.tfplan
+
+# SSH keys — should never be in source control
+*.pem
+*.key
+id_rsa
+id_rsa.pub
+
+# macOS system files
+.DS_Store
+
+# Windows thumbnail cache
+Thumbs.db

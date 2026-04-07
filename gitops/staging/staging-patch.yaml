@@ -1,0 +1,13 @@
+# Staging-specific environment overrides
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mern-auth
+spec:
+  template:
+    spec:
+      containers:
+        - name: mern-auth
+          env:
+            - name: NODE_ENV
+              value: staging

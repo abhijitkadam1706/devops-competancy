@@ -1,0 +1,30 @@
+# =====================================================================
+# Production Overlay — Blue/Green via ArgoCD
+# This overlay creates TWO deployments (blue + green) and a service
+# whose selector is patched to point at the active slot.
+#
+# Promotion workflow:
+#   1. Jenkins updates 'newTag' in staging/kustomization.yaml (auto-deploy)
+#   2. After staging verification, a PR is opened: staging → production
+#   3. Release manager merges the PR
+#   4. ArgoCD syncs production to match the merged state
+# =====================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mern-auth-production
+
+resources:
+  - blue-deployment.yaml
+  - green-deployment.yaml
+  - prod-service.yaml
+  - namespace.yaml
+
+commonLabels:
+  environment: production
+
+# ── Image tag — updated via PR merge from staging ────────────────────
+images:
+  - name: mern-auth
+    newName: 203848753188.dkr.ecr.ap-southeast-1.amazonaws.com/mern-auth/prod
+    newTag: latest  # UPDATED VIA PR MERGE

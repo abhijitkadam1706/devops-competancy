@@ -1,0 +1,21 @@
+{
+  "id": "mern-auth-test-env",
+  "name": "mern-auth CI Test Environment",
+  "values": [
+    {
+      "key":     "baseUrl",
+      "value":   "http://localhost:9191",
+      "enabled": true
+    },
+    {
+      "key":     "authToken",
+      "value":   "",
+      "enabled": true
+    },
+    {
+      "key":     "userId",
+      "value":   "",
+      "enabled": true
+    }
+  ]
+}

@@ -1,0 +1,31 @@
+version: "3.8"
+
+services:
+  mongo:
+    image: mongo:6.0
+    container_name: mern-mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: example
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  app:
+    build: .
+    container_name: mern-app
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    ports:
+      - "9191:9191"
+    environment:
+      NODE_ENV: production
+      PORT: 9191
+      MONGODB_URI: mongodb://root:example@mongo:27017/mern-auth?authSource=admin
+      JWT_SECRET: yourStrongSecret123
+
+volumes:
+  mongo-data:

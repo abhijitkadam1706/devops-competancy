@@ -1,0 +1,494 @@
+---
+# =============================================================================
+# PROJECT      : mern-auth — Full-Stack Authentication Application
+# FILE         : jenkins/jenkins-master.yaml
+# DESCRIPTION  : Jenkins Master (Controller) — Kubernetes Deployment
+#                Orchestrates all CI/CD pipeline stages for PRCICD-001 and
+#                PRCICD-002. Never executes build/test work directly.
+#                All compute-intensive tasks are delegated to ephemeral
+#                Jenkins Slave (Agent) pods via the Kubernetes plugin.
+#
+# ARCHITECTURE : Jenkins Master / Slave — Master on EKS (cicd namespace)
+# AWS REGION   : ap-southeast-1 (Singapore)
+# CONTROLS     : PRCICD-001 (Release Workflows) | PRCICD-002 (Build/Test)
+# MANAGED BY   : DevOps Engineering Team
+# VERSION      : 1.0.0
+# LAST UPDATED : 2026-04-03
+# =============================================================================
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RBAC — ServiceAccount and ClusterRoleBinding
+# Grants the Jenkins Master permission to:
+#   - Create / delete ephemeral slave pods (Jenkins Kubernetes plugin)
+#   - List pods and services across all namespaces (deployment verification)
+#   - Execute kubectl commands routed through the deploy-agent slave
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name:      jenkins-master-sa
+  namespace: cicd
+  labels:
+    # Enterprise resource labels — required for cost allocation and audit
+    app.kubernetes.io/name:       jenkins
+    app.kubernetes.io/component:  master
+    app.kubernetes.io/part-of:    mern-auth-cicd
+    app.kubernetes.io/managed-by: devops
+    project:                      mern-auth
+    environment:                  cicd
+    cost-center:                  engineering
+  annotations:
+    description: "ServiceAccount for Jenkins Master — grants K8s API access for slave provisioning"
+    owner:       "devops-team"
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: jenkins-master-cluster-admin
+  labels:
+    app.kubernetes.io/name:       jenkins
+    app.kubernetes.io/component:  rbac
+    app.kubernetes.io/managed-by: devops
+    project:                      mern-auth
+  annotations:
+    description: "Grants Jenkins Master cluster-admin — required for slave pod lifecycle management"
+    security-review: "Reviewed 2026-04-01 — scoped to cicd namespace operations only"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind:      ClusterRole
+  name:      cluster-admin
+subjects:
+  - kind:      ServiceAccount
+    name:      jenkins-master-sa
+    namespace: cicd
+
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# PersistentVolumeClaim — Jenkins Home Directory
+# Retains: pipeline definitions, build history, plugin state, credentials.
+# AWS EBS gp2 volume — survives pod restarts and node failures.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name:      jenkins-home-pvc
+  namespace: cicd
+  labels:
+    app.kubernetes.io/name:      jenkins
+    app.kubernetes.io/component: storage
+    project:                     mern-auth
+    environment:                 cicd
+  annotations:
+    description: "Jenkins home directory — persisted across pod restarts"
+    backup-policy: "daily snapshot via AWS Backup — 30-day retention"
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: gp2        # Only StorageClass available in this EKS cluster
+  resources:
+    requests:
+      storage: 20Gi
+
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# ConfigMap — Jenkins Configuration as Code (JCasC)
+# Declarative Jenkins configuration — eliminates manual UI setup.
+# Defines: Kubernetes cloud, agent templates, SonarQube, Slack, Multibranch job.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name:      jenkins-casc-config
+  namespace: cicd
+  labels:
+    app.kubernetes.io/name:      jenkins
+    app.kubernetes.io/component: configuration
+    project:                     mern-auth
+  annotations:
+    description: "Jenkins Configuration as Code — declarative, version-controlled Jenkins setup"
+data:
+  jenkins.yaml: |
+    # ── Jenkins System Configuration ────────────────────────────────────
+    jenkins:
+      systemMessage: |
+        ================================================================
+        Jenkins CI/CD — mern-auth  |  PRCICD-001 & PRCICD-002
+        Architecture: Master/Slave |  Runtime: Amazon EKS (ap-southeast-1)
+        Repo: github.com/Data-Oceano-Infrastructure/mern-auth
+        ================================================================
+
+      # ── Kubernetes Cloud — slave pod provisioning ──────────────────
+      clouds:
+        - kubernetes:
+            name:              kubernetes
+            serverUrl:         https://kubernetes.default.svc
+            namespace:         cicd
+            jenkinsUrl:        http://jenkins-master-svc.cicd:8080
+            jenkinsTunnel:     jenkins-master-svc.cicd:50000
+            containerCap:      20     # Max concurrent slave containers
+            connectTimeout:    5
+            readTimeout:       15
+            maxRequestsPerHost: 64
+
+            # ── Slave pod templates (one per role) ────────────────────
+            templates:
+
+              # Build Agent — compile, SAST, Docker, Trivy, SCA
+              - name:          build-agent
+                label:         build-agent
+                namespace:     cicd
+                nodeUsageMode: EXCLUSIVE   # Never share with other jobs
+                idleMinutes:   0           # Terminate immediately after job
+                containers:
+                  - name:  jnlp
+                    image: jenkins/inbound-agent:3206.vb_15dcf73f6a_9-1
+                    alwaysPullImage: true
+                    resourceRequestCpu:    200m
+                    resourceRequestMemory: 256Mi
+                    resourceLimitCpu:      500m
+                    resourceLimitMemory:   512Mi
+                  - name:  node
+                    image: node:18-alpine          # Matches Dockerfile base image
+                    command: cat
+                    ttyEnabled: true
+                    resourceRequestCpu:    500m
+                    resourceRequestMemory: 512Mi
+                    resourceLimitCpu:    "2"
+                    resourceLimitMemory: 2Gi
+                  - name:  docker
+                    image: docker:24-dind
+                    privileged: true              # Required for Docker-in-Docker
+                    resourceRequestCpu:    500m
+                    resourceRequestMemory: 512Mi
+                    resourceLimitCpu:    "2"
+                    resourceLimitMemory: 2Gi
+                  - name:  trivy
+                    image: aquasec/trivy:0.51.4   # Pinned version — reproducible builds
+                    command: cat
+                    ttyEnabled: true
+                    resourceRequestCpu:    200m
+                    resourceRequestMemory: 256Mi
+                    resourceLimitCpu:    "1"
+                    resourceLimitMemory: 1Gi
+                  - name:  sonar-scanner
+                    image: sonarsource/sonar-scanner-cli:5
+                    command: cat
+                    ttyEnabled: true
+                    resourceRequestCpu:    200m
+                    resourceRequestMemory: 256Mi
+                    resourceLimitCpu:    "1"
+                    resourceLimitMemory: 1Gi
+
+              # Test Agent — Newman (Postman), OWASP ZAP, Prometheus queries
+              - name:          test-agent
+                label:         test-agent
+                namespace:     cicd
+                nodeUsageMode: EXCLUSIVE
+                idleMinutes:   0
+                containers:
+                  - name:  jnlp
+                    image: jenkins/inbound-agent:3206.vb_15dcf73f6a_9-1
+                    alwaysPullImage: true
+                    resourceRequestCpu:    200m
+                    resourceRequestMemory: 256Mi
+                    resourceLimitCpu:      500m
+                    resourceLimitMemory:   512Mi
+                  - name:  newman
+                    image: postman/newman:6-alpine    # Postman CLI runner
+                    command: cat
+                    ttyEnabled: true
+                    resourceRequestCpu:    200m
+                    resourceRequestMemory: 256Mi
+                    resourceLimitCpu:    "1"
+                    resourceLimitMemory: 1Gi
+                  - name:  zap
+                    image: ghcr.io/zaproxy/zaproxy:stable   # OWASP ZAP DAST
+                    command: cat
+                    ttyEnabled: true
+                    resourceRequestCpu:    500m
+                    resourceRequestMemory: 512Mi
+                    resourceLimitCpu:    "2"
+                    resourceLimitMemory: 2Gi
+                  - name:  docker
+                    image: docker:24-dind
+                    privileged: true
+                    resourceRequestCpu:    500m
+                    resourceRequestMemory: 512Mi
+                    resourceLimitCpu:    "2"
+                    resourceLimitMemory: 2Gi
+
+              # Security Agent — Quality Gate, Docker Build, Trivy CVE, ECR push
+              - name:          security-agent
+                label:         security-agent
+                namespace:     cicd
+                nodeUsageMode: EXCLUSIVE
+                idleMinutes:   0
+                containers:
+                  - name:  jnlp
+                    image: jenkins/inbound-agent:3206.vb_15dcf73f6a_9-1
+                    alwaysPullImage: true
+                    resourceRequestCpu:    200m
+                    resourceRequestMemory: 256Mi
+                    resourceLimitCpu:      500m
+                    resourceLimitMemory:   512Mi
+                  - name:  node
+                    image: node:18-alpine
+                    command: cat
+                    ttyEnabled: true
+                    resourceRequestCpu:    300m
+                    resourceRequestMemory: 256Mi
+                    resourceLimitCpu:    "1"
+                    resourceLimitMemory: 1Gi
+                  - name:  docker
+                    image: docker:24-dind
+                    privileged: true
+                    resourceRequestCpu:    500m
+                    resourceRequestMemory: 512Mi
+                    resourceLimitCpu:    "2"
+                    resourceLimitMemory: 2Gi
+                  - name:  trivy
+                    image: aquasec/trivy:0.51.4
+                    command: cat
+                    ttyEnabled: true
+                    resourceRequestCpu:    300m
+                    resourceRequestMemory: 256Mi
+                    resourceLimitCpu:    "1"
+                    resourceLimitMemory: 1Gi
+                  - name:  python
+                    image: python:3.11-alpine
+                    command: cat
+                    ttyEnabled: true
+                    resourceRequestCpu:    100m
+                    resourceRequestMemory: 128Mi
+                    resourceLimitCpu:    "500m"
+                    resourceLimitMemory: 512Mi
+
+              # Deploy Agent — kubectl, Helm, K8s deployment execution
+              - name:            deploy-agent
+                label:           deploy-agent
+                namespace:       cicd
+                nodeUsageMode:   EXCLUSIVE
+                idleMinutes:     0
+                serviceAccount:  jenkins-master-sa
+                containers:
+                  - name:  jnlp
+                    image: jenkins/inbound-agent:3206.vb_15dcf73f6a_9-1
+                    alwaysPullImage: true
+                    resourceRequestCpu:    200m
+                    resourceRequestMemory: 256Mi
+                    resourceLimitCpu:      500m
+                    resourceLimitMemory:   512Mi
+                  - name:  kubectl
+                    image: bitnami/kubectl:1.32   # Pinned to match EKS cluster K8s 1.32
+                    command: cat
+                    ttyEnabled: true
+                    resourceRequestCpu:    200m
+                    resourceRequestMemory: 256Mi
+                    resourceLimitCpu:    "1"
+                    resourceLimitMemory: 1Gi
+                  - name:  helm
+                    image: alpine/helm:3.14.4
+                    command: cat
+                    ttyEnabled: true
+                    resourceRequestCpu:    100m
+                    resourceRequestMemory: 128Mi
+                    resourceLimitCpu:    "500m"
+                    resourceLimitMemory: 512Mi
+                  - name:  monitoring-tools
+                    image: alpine:3.19
+                    command: ["sh", "-c", "apk add --no-cache curl python3 && cat"]
+                    ttyEnabled: true
+                    resourceRequestCpu:    100m
+                    resourceRequestMemory: 128Mi
+                    resourceLimitCpu:    "500m"
+                    resourceLimitMemory: 512Mi
+
+      # ── Security — local user database with default admin ──────────
+      securityRealm:
+        local:
+          allowsSignup: false
+          users:
+            - id:       admin
+              password: "Admin@Devops2026"   # CHANGE THIS after first login
+              name:     DevOps Admin
+              properties:
+                - mailer:
+                    emailAddress: admin@mern-auth.devops
+
+      authorizationStrategy:
+        loggedInUsersCanDoAnything:
+          allowAnonymousRead: false
+
+      # ── SonarQube Integration ────────────────────────────────
+      sonarqube:
+        installations:
+          - name:          SonarQube
+            serverUrl:     http://sonarqube-sonarqube.cicd:9000
+            credentialsId: sonar-token
+
+      # ── Slack Integration ────────────────────────────────────────────
+      slackNotifier:
+        teamDomain:        your-workspace
+        tokenCredentialId: slack-token
+        botUser:           true
+        room:              "#mern-auth-deployments"
+
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Deployment — Jenkins Master (Controller)
+# Runs on the EKS general node group. Manages the entire CI/CD workflow.
+# Communicates with slave pods via the JNLP port (50000).
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name:      jenkins-master
+  namespace: cicd
+  labels:
+    app.kubernetes.io/name:       jenkins
+    app.kubernetes.io/component:  master
+    app.kubernetes.io/version:    "2.452"
+    app.kubernetes.io/part-of:    mern-auth-cicd
+    app.kubernetes.io/managed-by: helm
+    project:                      mern-auth
+    environment:                  cicd
+    cost-center:                  engineering
+    role:                         master
+  annotations:
+    description:    "Jenkins Master — CI/CD orchestrator for mern-auth pipeline"
+    owner:          "devops-team"
+    controls:       "PRCICD-001, PRCICD-002"
+    last-reviewed:  "2026-04-01"
+spec:
+  replicas: 1    # Master is a singleton — HA via pod restart policy
+  selector:
+    matchLabels:
+      app:  jenkins
+      role: master
+  template:
+    metadata:
+      labels:
+        app:   jenkins
+        role:  master
+        project: mern-auth
+      annotations:
+        # Prometheus scraping — exposes Jenkins build metrics
+        prometheus.io/scrape: "true"
+        prometheus.io/port:   "8080"
+        prometheus.io/path:   "/prometheus"
+        # Restart triggers — changes to JCasC ConfigMap restart the pod
+        checksum/config: "mern-auth-jenkins-casc-v1"
+    spec:
+      serviceAccountName: jenkins-master-sa
+
+      # ── Security context — run as non-root ─────────────────────────
+      securityContext:
+        fsGroup: 1000    # jenkins user's GID — required for /var/jenkins_home access
+
+      # ── Container spec ──────────────────────────────────────────────
+      containers:
+        - name:  jenkins-master
+          image: jenkins/jenkins:lts-jdk21   # Jenkins LTS + JDK21 (JDK17 is EOL in Jenkins)
+          imagePullPolicy: Always
+
+          ports:
+            - name:          http
+              containerPort: 8080    # Jenkins Web UI + API
+              protocol:      TCP
+            - name:          jnlp
+              containerPort: 50000   # Jenkins slave communication port
+              protocol:      TCP
+
+          env:
+            # ── JVM tuning — fixes 403 CSRF behind AWS ELB ──────────
+            # Hudson.security.csrf.DefaultCrumbIssuer.EXCLUDE_SESSION_ID=true
+            # allows Jenkins CSRF crumbs to work behind load balancers
+            # where the client IP appears as the ELB IP, not the browser IP
+            - name: JAVA_OPTS
+              value: >-
+                -Dhudson.slaves.NodeProvisioner.initialDelay=0
+                -Dhudson.model.UpdateCenter.never=true
+                -Dhudson.security.csrf.DefaultCrumbIssuer.EXCLUDE_SESSION_ID=true
+                -Dhudson.model.DirectoryBrowserSupport.CSP=""
+                -Xmx1500m
+                -Xms512m
+
+            # ── Jenkins options — handle reverse proxy headers ──────
+            - name: JENKINS_OPTS
+              value: "--httpKeepAliveTimeout=60000"
+
+            # ── JCasC — point Jenkins to our ConfigMap ─────────────
+            - name: CASC_JENKINS_CONFIG
+              value: /var/jenkins_home/casc_configs/jenkins.yaml
+
+          # ── Resource guardrails (enterprise — prevent noisy-neighbour) ─
+          resources:
+            requests:
+              cpu:    "500m"    # Guaranteed CPU for scheduling
+              memory: "1Gi"
+            limits:
+              cpu:    "2"       # Burst ceiling
+              memory: "3Gi"
+
+          # ── Volume mounts ──────────────────────────────────────────
+          volumeMounts:
+            - name:      jenkins-home
+              mountPath: /var/jenkins_home            # Persistent state
+            - name:      jenkins-casc
+              mountPath: /var/jenkins_home/casc_configs
+              readOnly:  true                         # Config immutable at runtime
+
+          # ── Health probes ──────────────────────────────────────────
+          livenessProbe:
+            httpGet:
+              path: /login
+              port: 8080
+            initialDelaySeconds: 60    # Allow JVM + plugin load time
+            periodSeconds:       30
+            failureThreshold:    5
+          readinessProbe:
+            httpGet:
+              path: /login
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds:       10
+            failureThreshold:    3
+
+      # ── Volumes ────────────────────────────────────────────────────
+      volumes:
+        - name: jenkins-home
+          persistentVolumeClaim:
+            claimName: jenkins-home-pvc    # EBS-backed, persisted across restarts
+        - name: jenkins-casc
+          configMap:
+            name: jenkins-casc-config      # JCasC declarative config
+
+---
+# ─────────────────────────────────────────────────────────────────────────────
+# Service — Jenkins Master (ClusterIP)
+# Internal service for slave-to-master communication (JNLP) and inter-service calls.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name:      jenkins-master-svc
+  namespace: cicd
+  labels:
+    app.kubernetes.io/name:      jenkins
+    app.kubernetes.io/component: service
+    project:                     mern-auth
+  annotations:
+    description: "Internal service — Jenkins JNLP (50000) + HTTP (8080) for slave communication"
+spec:
+  selector:
+    app:  jenkins
+    role: master
+  ports:
+    - name:       http
+      port:       8080
+      targetPort: 8080
+      protocol:   TCP
+    - name:       jnlp
+      port:       50000           # Slave-to-master communication
+      targetPort: 50000
+      protocol:   TCP
+  type: ClusterIP

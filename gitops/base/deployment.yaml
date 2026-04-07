@@ -1,0 +1,79 @@
+# =====================================================================
+# mern-auth — Base Deployment (Kustomize Base)
+# This is the canonical deployment template. Overlays patch namespace,
+# replicas, image tags, and environment-specific configuration.
+# =====================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mern-auth
+  labels:
+    app: mern-auth
+    app.kubernetes.io/name: mern-auth
+    app.kubernetes.io/managed-by: argocd
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mern-auth
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: mern-auth
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9191"
+        prometheus.io/path: "/metrics"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        fsGroup: 1001
+      containers:
+        - name: mern-auth
+          image: mern-auth:latest  # Patched by Kustomize overlay
+          ports:
+            - name: http
+              containerPort: 9191
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: staging
+            - name: PORT
+              value: "9191"
+            - name: MONGODB_URI
+              valueFrom:
+                secretKeyRef:
+                  name: mern-auth-secrets
+                  key: mongodb-uri
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: mern-auth-secrets
+                  key: jwt-secret
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          livenessProbe:
+            httpGet:
+              path: /api/user
+              port: 9191
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /api/user
+              port: 9191
+            initialDelaySeconds: 15
+            periodSeconds: 5
+            failureThreshold: 3
