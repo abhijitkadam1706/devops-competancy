@@ -99,11 +99,39 @@ module "iam" {
 
 # ── Monitoring ────────────────────────────────────────────────────────────────
 module "monitoring" {
-  source          = "../../modules/monitoring"
-  cluster_name    = local.cluster_name
-  environment     = local.environment
-  alert_email     = var.alert_email
+  source           = "../../modules/monitoring"
+  cluster_name     = local.cluster_name
+  environment      = local.environment
+  alert_email      = var.alert_email
   docdb_cluster_id = "${local.cluster_name}-docdb"
+}
+
+# ── Jenkins Enterprise Cluster (1 Master + 3 Typed Agents) ───────────────────
+# All nodes are bootstrapped automatically via user_data — no manual setup.
+# Agents register themselves to the master on first boot using SSH keys from SSM.
+module "jenkins" {
+  source      = "../../modules/jenkins"
+  cluster_name = local.cluster_name
+  environment  = local.environment
+  vpc_id       = module.vpc.vpc_id
+
+  # Master gets a public subnet (needs to serve the UI on port 8080)
+  public_subnet_id  = module.vpc.public_subnet_ids[0]
+
+  # Agents are in private subnets — no direct internet exposure
+  private_subnet_id = module.vpc.private_subnet_ids[0]
+
+  # Restrict UI access to your office/VPN IP for security
+  # To allow all (for demos): ["0.0.0.0/0"]
+  allowed_cidr_blocks = ["0.0.0.0/0"]
+
+  # Wire each node to its own least-privilege IAM profile
+  master_instance_profile         = module.iam.jenkins_master_profile
+  build_agent_instance_profile    = module.iam.jenkins_build_agent_profile
+  security_agent_instance_profile = module.iam.jenkins_security_agent_profile
+  test_agent_instance_profile     = module.iam.jenkins_test_agent_profile
+
+  depends_on = [module.iam, module.vpc]
 }
 
 # ── ECR Repositories ──────────────────────────────────────────────────────────
