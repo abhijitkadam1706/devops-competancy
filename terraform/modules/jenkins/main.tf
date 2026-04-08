@@ -254,9 +254,9 @@ resource "aws_instance" "build_agent" {
     mkdir -p /home/jenkins-agent/.ssh /home/jenkins-agent/workspace
 
     echo "=== Installing SSH public key for Master access ==="
-    cat > /home/jenkins-agent/.ssh/authorized_keys << 'PUBKEY'
-    ${tls_private_key.jenkins_agent_ssh.public_key_openssh}
-    PUBKEY
+    # Write public key without heredoc to avoid leading-space corruption from Terraform indentation
+    printf '%s\n' '${tls_private_key.jenkins_agent_ssh.public_key_openssh}' \
+      > /home/jenkins-agent/.ssh/authorized_keys
     chmod 700 /home/jenkins-agent/.ssh
     chmod 600 /home/jenkins-agent/.ssh/authorized_keys
     chown -R jenkins-agent:jenkins-agent /home/jenkins-agent
@@ -316,9 +316,8 @@ resource "aws_instance" "security_agent" {
     mkdir -p /home/jenkins-agent/.ssh /home/jenkins-agent/workspace
 
     echo "=== Installing SSH public key for Master access ==="
-    cat > /home/jenkins-agent/.ssh/authorized_keys << 'PUBKEY'
-    ${tls_private_key.jenkins_agent_ssh.public_key_openssh}
-    PUBKEY
+    printf '%s\n' '${tls_private_key.jenkins_agent_ssh.public_key_openssh}' \
+      > /home/jenkins-agent/.ssh/authorized_keys
     chmod 700 /home/jenkins-agent/.ssh
     chmod 600 /home/jenkins-agent/.ssh/authorized_keys
     chown -R jenkins-agent:jenkins-agent /home/jenkins-agent
@@ -370,7 +369,7 @@ resource "aws_instance" "test_agent" {
     systemctl enable docker
 
     echo "=== Installing Newman and JUnit reporter ==="
-    npm install -g newman newman-reporter-junit
+    npm install -g newman newman-reporter-htmlextra
 
     echo "=== Creating Jenkins agent user ==="
     useradd -m -s /bin/bash jenkins-agent
@@ -378,9 +377,8 @@ resource "aws_instance" "test_agent" {
     mkdir -p /home/jenkins-agent/.ssh /home/jenkins-agent/workspace
 
     echo "=== Installing SSH public key for Master access ==="
-    cat > /home/jenkins-agent/.ssh/authorized_keys << 'PUBKEY'
-    ${tls_private_key.jenkins_agent_ssh.public_key_openssh}
-    PUBKEY
+    printf '%s\n' '${tls_private_key.jenkins_agent_ssh.public_key_openssh}' \
+      > /home/jenkins-agent/.ssh/authorized_keys
     chmod 700 /home/jenkins-agent/.ssh
     chmod 600 /home/jenkins-agent/.ssh/authorized_keys
     chown -R jenkins-agent:jenkins-agent /home/jenkins-agent
