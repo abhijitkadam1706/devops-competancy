@@ -45,7 +45,7 @@ pipeline {
         HEALTH_EP       = "/api/user"
 
         // ── GitOps repo (ArgoCD watches this) ────────────────────────
-        GITOPS_REPO     = "https://github.com/Data-Oceano-Infrastructure/mern-auth-gitops.git"
+        GITOPS_REPO     = "https://github.com/abhijitkadam1706/mern-auth-gitops.git"
         GITOPS_BRANCH   = "main"
 
         // ── Thresholds ───────────────────────────────────────────────
@@ -374,7 +374,7 @@ json.dump(config, open('/tmp/kaniko-config/config.json', 'w'))
                     sh """
                         # Clone the GitOps repo
                         rm -rf gitops-workspace
-                        git clone https://\${GIT_USER}:\${GIT_TOKEN}@github.com/Data-Oceano-Infrastructure/mern-auth-gitops.git gitops-workspace
+                        git clone https://\${GIT_USER}:\${GIT_TOKEN}@github.com/abhijitkadam1706/mern-auth-gitops.git gitops-workspace
                         cd gitops-workspace
 
                         # Update staging image tag using kustomize
