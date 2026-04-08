@@ -36,8 +36,9 @@ pipeline {
         AWS_REGION      = "ap-southeast-1"
 
         // ── SonarQube ────────────────────────────────────────────────
-        SONAR_URL       = "http://sonarqube:9000"
-        SONAR_PROJECT   = "mern-auth"
+        SONAR_URL       = "https://sonarcloud.io"
+        SONAR_PROJECT   = "abhijitkadam1706_devops-competancy"
+        SONAR_ORG       = "abhijitkadam1706"
 
         // ── App ──────────────────────────────────────────────────────
         APP_PORT        = "9191"
@@ -99,6 +100,7 @@ pipeline {
                             sh """
                                 sonar-scanner \\
                                   -Dsonar.projectKey=${SONAR_PROJECT} \\
+                                  -Dsonar.organization=${SONAR_ORG} \\
                                   -Dsonar.sources=api,client/src \\
                                   -Dsonar.exclusions=**/node_modules/**,client/dist/** \\
                                   -Dsonar.javascript.lcov.reportPaths=client/coverage/lcov.info \\
