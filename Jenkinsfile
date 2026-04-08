@@ -122,7 +122,8 @@ pipeline {
         // STAGE 3: Quality Gate + Coverage
         // ────────────────────────────────────────────────────────────
         stage('3: Quality Gate') {
-            agent { label 'security-agent' }
+            agent { label 'build-agent' }
+            options { skipDefaultCheckout(true) }
             steps {
                 timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
