@@ -231,8 +231,8 @@ resource "aws_instance" "build_agent" {
     set -euo pipefail
     exec > /var/log/jenkins-build-agent-init.log 2>&1
 
-    echo "=== Installing Java 17 ==="
-    dnf install java-17-amazon-corretto git -y
+    echo "=== Installing Java 17 and build tools ==="
+    dnf install java-17-amazon-corretto git python3 -y
 
     echo "=== Installing Node.js 20 ==="
     curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
@@ -307,8 +307,9 @@ resource "aws_instance" "security_agent" {
     systemctl enable docker
 
     echo "=== Installing Trivy ==="
-    TRIVY_VERSION="0.50.2"
-    rpm -ivh https://github.com/aquasecurity/trivy/releases/download/v$${TRIVY_VERSION}/trivy_$${TRIVY_VERSION}_Linux-64bit.rpm
+    curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
+      | sh -s -- -b /usr/local/bin v0.50.2
+    trivy --version
 
     echo "=== Installing Cosign ==="
     COSIGN_VERSION="v2.2.2"
@@ -366,8 +367,8 @@ resource "aws_instance" "test_agent" {
     set -euo pipefail
     exec > /var/log/jenkins-test-agent-init.log 2>&1
 
-    echo "=== Installing Java 17, Docker, Node.js ==="
-    dnf install java-17-amazon-corretto docker -y
+    echo "=== Installing Java 17, Docker, Node.js, Git ==="
+    dnf install java-17-amazon-corretto docker git -y
     curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
     dnf install nodejs -y
 
@@ -376,7 +377,7 @@ resource "aws_instance" "test_agent" {
     systemctl enable docker
 
     echo "=== Installing Newman and JUnit reporter ==="
-    npm install -g newman newman-reporter-htmlextra
+    npm install -g newman newman-reporter-htmlextra newman-reporter-junit
 
     echo "=== Creating Jenkins agent user ==="
     useradd -m -s /bin/bash jenkins-agent

@@ -262,7 +262,7 @@ json.dump(config, open('/tmp/kaniko-config/config.json', 'w'))
                 """
                 sh 'docker rm -f mern-auth-test test-mongo 2>/dev/null || true'
                 sh 'docker network rm test-net 2>/dev/null || true'
-                sh 'docker network create --internal test-net'
+                sh 'docker network create test-net'
 
                 withCredentials([
                     string(credentialsId: 'test-jwt-secret', variable: 'JWT_SECRET'),
