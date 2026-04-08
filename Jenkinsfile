@@ -225,10 +225,18 @@ json.dump(config, open('/tmp/kaniko-config/config.json', 'w'))
 
                 // ── Cosign Keyless Image Signing ──────────────────────────
                 // Signs the staged image using Sigstore OIDC keyless signing.
-                // No private key is stored in Jenkins — the OIDC token from
-                // the EC2 IMDS authenticates the Jenkins service identity.
+                // Cosign binary auto-installs to ~/bin if not present (no sudo needed).
                 // Signature is recorded in Rekor transparency log (auditable).
                 sh """
+                    # Install cosign if missing
+                    if ! command -v cosign &>/dev/null && [ ! -f ~/bin/cosign ]; then
+                        echo "Installing cosign v2.2.2..."
+                        mkdir -p ~/bin
+                        curl -sSfL https://github.com/sigstore/cosign/releases/download/v2.2.2/cosign-linux-amd64 \\
+                            -o ~/bin/cosign
+                        chmod +x ~/bin/cosign
+                    fi
+                    export PATH="\$HOME/bin:\$PATH"
                     COSIGN_EXPERIMENTAL=1 cosign sign \\
                         --yes \\
                         --oidc-provider=aws \\

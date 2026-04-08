@@ -310,6 +310,13 @@ resource "aws_instance" "security_agent" {
     TRIVY_VERSION="0.50.2"
     rpm -ivh https://github.com/aquasecurity/trivy/releases/download/v$${TRIVY_VERSION}/trivy_$${TRIVY_VERSION}_Linux-64bit.rpm
 
+    echo "=== Installing Cosign ==="
+    COSIGN_VERSION="v2.2.2"
+    curl -sSfL https://github.com/sigstore/cosign/releases/download/$${COSIGN_VERSION}/cosign-linux-amd64 \
+      -o /usr/local/bin/cosign
+    chmod +x /usr/local/bin/cosign
+    cosign version
+
     echo "=== Creating Jenkins agent user ==="
     useradd -m -s /bin/bash jenkins-agent
     usermod -aG docker jenkins-agent   # Allow jenkins-agent to run Docker (for Kaniko)
