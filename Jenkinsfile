@@ -75,9 +75,11 @@ pipeline {
                     env.IMAGE_TAG = "${BUILD_NUMBER}-${sha}"
                 }
                 echo "Branch: ${env.BRANCH_NAME ?: 'manual'} | Tag: ${IMAGE_TAG}"
-                sh 'npm ci'
-                sh 'npm ci --prefix client'
-                sh 'npm run build --prefix client'
+                dir('mern-auth') {
+                    sh 'npm ci'
+                    sh 'npm ci --prefix client'
+                    sh 'npm run build --prefix client'
+                }
             }
             post {
                 success { echo '✅ Build successful' }
@@ -93,19 +95,23 @@ pipeline {
             steps {
                 parallel(
                     'ESLint': {
-                        sh 'npm run lint --prefix client'
+                        dir('mern-auth') {
+                            sh 'npm run lint --prefix client'
+                        }
                     },
                     'SonarQube': {
                         withSonarQubeEnv('SonarQube') {
-                            sh """
-                                sonar-scanner \\
-                                  -Dsonar.projectKey=${SONAR_PROJECT} \\
-                                  -Dsonar.organization=${SONAR_ORG} \\
-                                  -Dsonar.sources=api,client/src \\
-                                  -Dsonar.exclusions=**/node_modules/**,client/dist/** \\
-                                  -Dsonar.javascript.lcov.reportPaths=client/coverage/lcov.info \\
-                                  -Dsonar.host.url=${SONAR_URL}
-                            """
+                            dir('mern-auth') {
+                                sh """
+                                    sonar-scanner \\
+                                      -Dsonar.projectKey=${SONAR_PROJECT} \\
+                                      -Dsonar.organization=${SONAR_ORG} \\
+                                      -Dsonar.sources=api,client/src \\
+                                      -Dsonar.exclusions=**/node_modules/**,client/dist/** \\
+                                      -Dsonar.javascript.lcov.reportPaths=client/coverage/lcov.info \\
+                                      -Dsonar.host.url=${SONAR_URL}
+                                """
+                            }
                         }
                     }
                 )
@@ -121,9 +127,11 @@ pipeline {
                 timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: true
                 }
-                sh 'npx --prefix client vitest run --coverage --reporter=json'
+                dir('mern-auth') {
+                    sh 'npx --prefix client vitest run --coverage --reporter=json'
+                }
                 script {
-                    def covFile = 'client/coverage/coverage-summary.json'
+                    def covFile = 'mern-auth/client/coverage/coverage-summary.json'
                     if (!fileExists(covFile)) {
                         error("Coverage report missing. Install @vitest/coverage-v8.")
                     }
