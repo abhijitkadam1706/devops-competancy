@@ -299,8 +299,8 @@ resource "aws_instance" "security_agent" {
     set -euo pipefail
     exec > /var/log/jenkins-security-agent-init.log 2>&1
 
-    echo "=== Installing Java 17 and Docker ==="
-    dnf install java-17-amazon-corretto docker -y
+    echo "=== Installing Java 17, Docker, and Git ==="
+    dnf install java-17-amazon-corretto docker git -y
 
     echo "=== Starting Docker service ==="
     systemctl start docker

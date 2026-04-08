@@ -100,27 +100,69 @@ pipeline {
                         }
                     },
                     'SonarQube': {
-                        withSonarQubeEnv('SonarQube') {
-                            dir('mern-auth') {
-                                sh """
-                                    sonar-scanner \\
-                                      -Dsonar.projectKey=${SONAR_PROJECT} \\
-                                      -Dsonar.organization=${SONAR_ORG} \\
-                                      -Dsonar.sources=api,client/src \\
-                                      -Dsonar.exclusions=**/node_modules/**,client/dist/** \\
-                                      -Dsonar.javascript.lcov.reportPaths=client/coverage/lcov.info \\
-                                      -Dsonar.host.url=${SONAR_URL}
-                                """
+                        withSonarQubeEnv('S        stage('3: Quality Gate') {
+            agent { label 'build-agent' }
+            options { skipDefaultCheckout(true) }
+            environment {
+                SONAR_TOKEN = credentials('sonarqube-token')
+            }
+            steps {
+                script {
+                    // ── Poll SonarCloud API (free plan — no webhook needed) ──
+                    def taskId = sh(
+                        script: "grep ceTaskId mern-auth/.scannerwork/report-task.txt | cut -d= -f2",
+                        returnStdout: true
+                    ).trim()
+                    echo "Polling SonarCloud task: ${taskId}"
+
+                    timeout(time: 5, unit: 'MINUTES') {
+                        waitUntil(initialRecurrencePeriod: 5000) {
+                            def result = sh(
+                                script: """curl -s -u "\${SONAR_TOKEN}:" \
+                                  "https://sonarcloud.io/api/ce/task?id=${taskId}" \
+                                  | python3 -c "import sys,json; print(json.load(sys.stdin)['task']['status'])" """,
+                                returnStdout: true
+                            ).trim()
+                            echo "Task status: ${result}"
+                            if (result == 'FAILED' || result == 'CANCELLED') {
+                                error("SonarCloud analysis task ${result}")
                             }
+                            return result == 'SUCCESS'
                         }
                     }
-                )
-            }
-        }
 
-        // ────────────────────────────────────────────────────────────
-        // STAGE 3: Quality Gate + Coverage
-        // ────────────────────────────────────────────────────────────
+                    def qgStatus = sh(
+                        script: """curl -s -u "\${SONAR_TOKEN}:" \
+                          "https://sonarcloud.io/api/qualitygates/project_status?projectKey=${SONAR_PROJECT}" \
+                          | python3 -c "import sys,json; print(json.load(sys.stdin)['projectStatus']['status'])" """,
+                        returnStdout: true
+                    ).trim()
+                    echo "Quality Gate: ${qgStatus}"
+                    if (qgStatus != 'OK') {
+                        error("Quality Gate FAILED — ${qgStatus}. See: https://sonarcloud.io/dashboard?id=${SONAR_PROJECT}")
+                    }
+                }
+
+                // ── Run unit/coverage tests ─────────────────────────────
+                dir('mern-auth') {
+                    sh 'npx --prefix client vitest run --coverage --reporter=json'
+                }
+                script {
+                    def covFile = 'mern-auth/client/coverage/coverage-summary.json'
+                    if (!fileExists(covFile)) {
+                        error("Coverage report missing. Install @vitest/coverage-v8.")
+                    }
+                    def coverage = sh(
+                        script: "python3 -c \"import json; d=json.load(open('${covFile}')); print(int(d['total']['lines']['pct']))\"",
+                        returnStdout: true
+                    ).trim().toInteger()
+                    echo "Line coverage: ${coverage}%"
+                    if (coverage < MIN_COVERAGE.toInteger()) {
+                        error("Coverage ${coverage}% < required ${MIN_COVERAGE}%")
+                    }
+                }
+            }
+        }�────────
         stage('3: Quality Gate') {
             agent { label 'build-agent' }
             options { skipDefaultCheckout(true) }
