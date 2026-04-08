@@ -17,11 +17,9 @@
 # =============================================================================
 
 # ─────────────────────────────────────────────────────────────────────────────
-# RBAC — ServiceAccount and ClusterRoleBinding
-# Grants the Jenkins Master permission to:
-#   - Create / delete ephemeral slave pods (Jenkins Kubernetes plugin)
-#   - List pods and services across all namespaces (deployment verification)
-#   - Execute kubectl commands routed through the deploy-agent slave
+# RBAC — ServiceAccount, Role, and RoleBinding (ZERO-TRUST)
+# Jenkins Master only needs to CREATE/DELETE ephemeral slave PODS in the `cicd`
+# namespace. No cluster-wide permissions are granted.
 # ─────────────────────────────────────────────────────────────────────────────
 apiVersion: v1
 kind: ServiceAccount
@@ -38,25 +36,49 @@ metadata:
     environment:                  cicd
     cost-center:                  engineering
   annotations:
-    description: "ServiceAccount for Jenkins Master — grants K8s API access for slave provisioning"
+    description: "ServiceAccount for Jenkins Master — namespaced pod lifecycle only"
     owner:       "devops-team"
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: Role
 metadata:
-  name: jenkins-master-cluster-admin
+  name:      jenkins-agent-role
+  namespace: cicd
   labels:
     app.kubernetes.io/name:       jenkins
     app.kubernetes.io/component:  rbac
     app.kubernetes.io/managed-by: devops
     project:                      mern-auth
   annotations:
-    description: "Grants Jenkins Master cluster-admin — required for slave pod lifecycle management"
-    security-review: "Reviewed 2026-04-01 — scoped to cicd namespace operations only"
+    description: "Least-privilege Role — Jenkins may only manage ephemeral agent pods in cicd namespace"
+    security-review: "Zero-Trust: no cluster-admin, no cross-namespace access — 2026-04-08"
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs:     ["get", "list", "watch", "create", "delete", "patch"]
+  - apiGroups: [""]
+    resources: ["pods/log", "pods/exec"]
+    verbs:     ["get", "list"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs:     ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name:      jenkins-agent-rolebinding
+  namespace: cicd
+  labels:
+    app.kubernetes.io/name:       jenkins
+    app.kubernetes.io/component:  rbac
+    app.kubernetes.io/managed-by: devops
+    project:                      mern-auth
+  annotations:
+    description: "Binds jenkins-master-sa to the namespaced jenkins-agent-role"
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind:      ClusterRole
-  name:      cluster-admin
+  kind:      Role
+  name:      jenkins-agent-role
 subjects:
   - kind:      ServiceAccount
     name:      jenkins-master-sa
@@ -253,8 +275,16 @@ data:
                     resourceRequestMemory: 256Mi
                     resourceLimitCpu:    "1"
                     resourceLimitMemory: 1Gi
-                  - name:  python
+                   - name:  python
                     image: python:3.11-alpine
+                    command: cat
+                    ttyEnabled: true
+                    resourceRequestCpu:    100m
+                    resourceRequestMemory: 128Mi
+                    resourceLimitCpu:    "500m"
+                    resourceLimitMemory: 512Mi
+                  - name:  cosign
+                    image: bitnami/cosign:2       # Pinned major version — Sigstore image signing
                     command: cat
                     ttyEnabled: true
                     resourceRequestCpu:    100m

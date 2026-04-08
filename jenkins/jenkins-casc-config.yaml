@@ -37,9 +37,6 @@ jenkins:
                 username:    registry-user
                 password:    "${REGISTRY_PASSWORD}"
                 description: Container registry credentials
-            - file:
-                id:          kubeconfig-creds
-                description: Kubernetes cluster kubeconfig
             - string:
                 id:    sonar-token
                 secret: "${SONAR_TOKEN}"
@@ -142,33 +139,7 @@ jenkins:
                 resourceRequestCpu:    500m
                 resourceRequestMemory: 512Mi
 
-          # ---- Deploy Agent ----
-          - name:            deploy-agent
-            label:           deploy-agent
-            namespace:       cicd
-            nodeUsageMode:   EXCLUSIVE
-            idleMinutes:     0
-            serviceAccount:  jenkins-master-sa
-            containers:
-              - name:  jnlp
-                image: jenkins/inbound-agent:3206.vb_15dcf73f6a_9-1
-                alwaysPullImage: true
-                resourceRequestCpu:    200m
-                resourceRequestMemory: 256Mi
-              - name:  kubectl
-                image: bitnami/kubectl:1.29
-                command: cat
-                ttyEnabled: true
-                resourceRequestCpu:    200m
-                resourceRequestMemory: 256Mi
-              - name:  helm
-                image: alpine/helm:3.14.4
-                command: cat
-                ttyEnabled: true
-                resourceRequestCpu:    100m
-                resourceRequestMemory: 128Mi
 
-  # ---- Branch protection (Pipeline Multibranch) ----
   jobs:
     - script: |
         multibranchPipelineJob('mern-auth-cicd') {

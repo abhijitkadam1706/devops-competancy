@@ -5,6 +5,8 @@ import userRoutes from './routes/user.route.js';
 import authRoutes from './routes/auth.route.js';
 import cookieParser from 'cookie-parser';
 import path from 'path';
+import promBundle from 'express-prom-bundle';
+import promClient from 'prom-client';
 dotenv.config();
 
 mongoose
@@ -19,6 +21,24 @@ mongoose
 const __dirname = path.resolve();
 
 const app = express();
+
+// ── Prometheus Observability ──────────────────────────────────────────────────
+// Collects default Node.js process metrics (heap, CPU, event-loop lag, etc.)
+promClient.collectDefaultMetrics({ prefix: 'mern_auth_' });
+
+// Auto-instruments all routes with http_request_duration_seconds histogram
+// and http_requests_total counter. Exposes GET /metrics for Prometheus scraping.
+const metricsMiddleware = promBundle({
+  includeMethod: true,
+  includePath: true,
+  includeStatusCode: true,
+  includeUp: true,
+  customLabels: { app: 'mern-auth', env: process.env.NODE_ENV || 'production' },
+  promClient: { collectDefaultMetrics: {} },
+  metricsPath: '/metrics',
+});
+app.use(metricsMiddleware);
+// ─────────────────────────────────────────────────────────────────────────────
 
 app.use(express.json());
 app.use(cookieParser());

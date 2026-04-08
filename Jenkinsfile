@@ -197,6 +197,19 @@ json.dump(config, open('/tmp/kaniko-config/config.json', 'w'))
                         ${STAGE_REGISTRY}:${IMAGE_TAG}
                 """
 
+                // ── Cosign Keyless Image Signing ──────────────────────────
+                // Signs the staged image using Sigstore OIDC keyless signing.
+                // No private key is stored in Jenkins — the OIDC token from
+                // the EC2 IMDS authenticates the Jenkins service identity.
+                // Signature is recorded in Rekor transparency log (auditable).
+                sh """
+                    COSIGN_EXPERIMENTAL=1 cosign sign \\
+                        --yes \\
+                        --oidc-provider=aws \\
+                        ${STAGE_REGISTRY}:${IMAGE_TAG}
+                """
+                echo "✅ Image ${STAGE_REGISTRY}:${IMAGE_TAG} signed and recorded in Rekor"
+
                 archiveArtifacts artifacts: "trivy-report-${BUILD_NUMBER}.json, sbom-${BUILD_NUMBER}.json"
             }
         }

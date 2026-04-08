@@ -140,10 +140,10 @@ resource "aws_acm_certificate" "main" {
   tags = { Name = "${var.cluster_name}-cert" }
 }
 
-# ── AWS WAF (OPTIONAL — only created when domain_name is set) ─────────────────
-# WAF is only useful when you have a stable domain to point it at.
+# ── AWS WAF (MANDATORY — always provisioned for security) ─────────────────────
+# WAF enforces baseline protection regardless of whether a custom domain exists.
+# This aligns with the AWS DevOps Competency zero-tolerance security posture.
 resource "aws_wafv2_web_acl" "main" {
-  count = var.domain_name != "" ? 1 : 0
   name  = "${var.cluster_name}-waf"
   scope = "REGIONAL"
 
