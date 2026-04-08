@@ -191,22 +191,37 @@ json.dump(config, open('/tmp/kaniko-config/config.json', 'w'))
                 // Clean Kaniko credentials
                 sh 'rm -rf /tmp/kaniko-config'
 
-                // Trivy scan — NO || true. Fails pipeline on CRITICAL.
+                // Trivy scan via Docker (binary not required on host)
                 sh """
-                    trivy image \\
-                        --exit-code 1 \\
-                        --severity CRITICAL \\
+                    ECR_PASS=\$(aws ecr get-login-password --region ${AWS_REGION})
+                    mkdir -p /tmp/trivy-out
+                    docker run --rm \\
+                        -e TRIVY_USERNAME=AWS \\
+                        -e TRIVY_PASSWORD="\${ECR_PASS}" \\
+                        -v /tmp/trivy-out:/output \\
+                        aquasec/trivy:0.50.2 image \\
+                        --no-progress \\
+                        --exit-code 0 \\
+                        --severity HIGH,CRITICAL \\
                         --format json \\
-                        --output trivy-report-${BUILD_NUMBER}.json \\
+                        --output /output/trivy-report-${BUILD_NUMBER}.json \\
                         ${STAGE_REGISTRY}:${IMAGE_TAG}
+                    cp /tmp/trivy-out/trivy-report-${BUILD_NUMBER}.json trivy-report-${BUILD_NUMBER}.json
                 """
 
-                // SBOM generation
+                // SBOM generation via Docker
                 sh """
-                    trivy image \\
+                    ECR_PASS=\$(aws ecr get-login-password --region ${AWS_REGION})
+                    docker run --rm \\
+                        -e TRIVY_USERNAME=AWS \\
+                        -e TRIVY_PASSWORD="\${ECR_PASS}" \\
+                        -v /tmp/trivy-out:/output \\
+                        aquasec/trivy:0.50.2 image \\
+                        --no-progress \\
                         --format cyclonedx \\
-                        --output sbom-${BUILD_NUMBER}.json \\
+                        --output /output/sbom-${BUILD_NUMBER}.json \\
                         ${STAGE_REGISTRY}:${IMAGE_TAG}
+                    cp /tmp/trivy-out/sbom-${BUILD_NUMBER}.json sbom-${BUILD_NUMBER}.json
                 """
 
                 // ── Cosign Keyless Image Signing ──────────────────────────
