@@ -1,0 +1,206 @@
+{
+  "info": {
+    "_postman_id": "mern-auth-ci-collection",
+    "name": "MERN Auth Integration Tests",
+    "description": "End-to-end API tests for mern-auth service. Runs against the staging container.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:9191" },
+    { "key": "accessToken", "value": "" },
+    { "key": "userId", "value": "" },
+    { "key": "testEmail", "value": "ci-test@devops-competency.local" },
+    { "key": "testPassword", "value": "CItest@1234!" },
+    { "key": "testUsername", "value": "citest_user" }
+  ],
+  "item": [
+    {
+      "name": "Health Check",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Health endpoint returns 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/api/user", "host": ["{{baseUrl}}"], "path": ["api", "user"] }
+      }
+    },
+    {
+      "name": "Sign Up — new user",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Signup returns 201', function () {",
+              "    pm.response.to.have.status(201);",
+              "});",
+              "pm.test('Success message present', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json.message).to.eql('User created successfully');",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{testUsername}}\",\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"{{testPassword}}\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/auth/signup", "host": ["{{baseUrl}}"], "path": ["api", "auth", "signup"] }
+      }
+    },
+    {
+      "name": "Sign Up — duplicate user (expect 409 or 500)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Duplicate signup is rejected (4xx/5xx)', function () {",
+              "    pm.expect(pm.response.code).to.be.within(400, 599);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"username\": \"{{testUsername}}\",\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"{{testPassword}}\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/auth/signup", "host": ["{{baseUrl}}"], "path": ["api", "auth", "signup"] }
+      }
+    },
+    {
+      "name": "Sign In — valid credentials",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Signin returns 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});",
+              "pm.test('Response contains user object', function () {",
+              "    var json = pm.response.json();",
+              "    pm.expect(json).to.have.property('email');",
+              "    pm.expect(json.email).to.eql(pm.collectionVariables.get('testEmail'));",
+              "    pm.collectionVariables.set('userId', json._id);",
+              "});",
+              "pm.test('Access token cookie is set', function () {",
+              "    pm.expect(pm.response.headers.get('Set-Cookie')).to.include('access_token');",
+              "    // Extract cookie for subsequent requests",
+              "    var cookieHeader = pm.response.headers.get('Set-Cookie');",
+              "    if (cookieHeader) {",
+              "        var match = cookieHeader.match(/access_token=([^;]+)/);",
+              "        if (match) pm.collectionVariables.set('accessToken', match[1]);",
+              "    }",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"{{testPassword}}\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/auth/signin", "host": ["{{baseUrl}}"], "path": ["api", "auth", "signin"] }
+      }
+    },
+    {
+      "name": "Sign In — wrong password (expect 401)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Wrong password returns 401', function () {",
+              "    pm.response.to.have.status(401);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"{{testEmail}}\",\n  \"password\": \"WrongPassword999!\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/auth/signin", "host": ["{{baseUrl}}"], "path": ["api", "auth", "signin"] }
+      }
+    },
+    {
+      "name": "Sign In — unknown user (expect 404)",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Unknown user returns 404', function () {",
+              "    pm.response.to.have.status(404);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "POST",
+        "header": [{ "key": "Content-Type", "value": "application/json" }],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"email\": \"nobody@nowhere.com\",\n  \"password\": \"whatever\"\n}"
+        },
+        "url": { "raw": "{{baseUrl}}/api/auth/signin", "host": ["{{baseUrl}}"], "path": ["api", "auth", "signin"] }
+      }
+    },
+    {
+      "name": "Sign Out",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "exec": [
+              "pm.test('Signout returns 200', function () {",
+              "    pm.response.to.have.status(200);",
+              "});"
+            ],
+            "type": "text/javascript"
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Cookie", "value": "access_token={{accessToken}}" }
+        ],
+        "url": { "raw": "{{baseUrl}}/api/auth/signout", "host": ["{{baseUrl}}"], "path": ["api", "auth", "signout"] }
+      }
+    }
+  ]
+}
