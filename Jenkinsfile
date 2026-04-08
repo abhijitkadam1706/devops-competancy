@@ -191,13 +191,14 @@ json.dump(config, open('/tmp/kaniko-config/config.json', 'w'))
                 // Clean Kaniko credentials
                 sh 'rm -rf /tmp/kaniko-config'
 
-                // Trivy scan via Docker (binary not required on host)
+                // Trivy scan — pull image locally then scan via docker socket
                 sh """
-                    ECR_PASS=\$(aws ecr get-login-password --region ${AWS_REGION})
+                    aws ecr get-login-password --region ${AWS_REGION} | \\
+                        docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                    docker pull ${STAGE_REGISTRY}:${IMAGE_TAG}
                     mkdir -p /tmp/trivy-out
                     docker run --rm \\
-                        -e TRIVY_USERNAME=AWS \\
-                        -e TRIVY_PASSWORD="\${ECR_PASS}" \\
+                        -v /var/run/docker.sock:/var/run/docker.sock \\
                         -v /tmp/trivy-out:/output \\
                         aquasec/trivy:0.50.2 image \\
                         --no-progress \\
@@ -209,12 +210,10 @@ json.dump(config, open('/tmp/kaniko-config/config.json', 'w'))
                     cp /tmp/trivy-out/trivy-report-${BUILD_NUMBER}.json trivy-report-${BUILD_NUMBER}.json
                 """
 
-                // SBOM generation via Docker
+                // SBOM generation — reuses locally-pulled image
                 sh """
-                    ECR_PASS=\$(aws ecr get-login-password --region ${AWS_REGION})
                     docker run --rm \\
-                        -e TRIVY_USERNAME=AWS \\
-                        -e TRIVY_PASSWORD="\${ECR_PASS}" \\
+                        -v /var/run/docker.sock:/var/run/docker.sock \\
                         -v /tmp/trivy-out:/output \\
                         aquasec/trivy:0.50.2 image \\
                         --no-progress \\

@@ -134,7 +134,7 @@ resource "aws_iam_role_policy" "jenkins_security_agent_ecr_push" {
         Resource = "*"
       },
       {
-        Sid    = "ECRPushOnly"
+        Sid    = "ECRPush"
         Effect = "Allow"
         Action = [
           "ecr:BatchCheckLayerAvailability",
@@ -143,7 +143,17 @@ resource "aws_iam_role_policy" "jenkins_security_agent_ecr_push" {
           "ecr:CompleteLayerUpload",
           "ecr:PutImage"
         ]
-        # Scoped to ONLY the staging and production ECR repos — no wildcard
+        Resource = var.ecr_repository_arns
+      },
+      {
+        # Trivy needs to pull the image it just built for scanning
+        Sid    = "ECRPullForTrivy"
+        Effect = "Allow"
+        Action = [
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:DescribeImages"
+        ]
         Resource = var.ecr_repository_arns
       }
     ]
