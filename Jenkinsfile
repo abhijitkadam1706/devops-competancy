@@ -341,7 +341,7 @@ json.dump(config, open('/tmp/kaniko-config/config.json', 'w'))
                     }
                     // Use sh grep — Matcher.count is blocked by Jenkins sandbox
                     def highCount = sh(
-                        script: "grep -c '<riskcode>3</riskcode>' ${zapFile} || true",
+                        script: "grep -o '<riskcode>3</riskcode>' ${zapFile} | wc -l",
                         returnStdout: true
                     ).trim().toInteger()
                     echo "ZAP HIGH-risk alerts: ${highCount}"
