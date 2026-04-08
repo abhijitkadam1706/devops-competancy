@@ -339,8 +339,11 @@ json.dump(config, open('/tmp/kaniko-config/config.json', 'w'))
                     if (!fileExists(zapFile)) {
                         error("ZAP report not found. DAST scan failed.")
                     }
-                    def zapXml = readFile(zapFile)
-                    int highCount = (zapXml =~ /riskcode>3<\/riskcode/).count
+                    // Use sh grep — Matcher.count is blocked by Jenkins sandbox
+                    def highCount = sh(
+                        script: "grep -c '<riskcode>3</riskcode>' ${zapFile} || echo 0",
+                        returnStdout: true
+                    ).trim().toInteger()
                     echo "ZAP HIGH-risk alerts: ${highCount}"
                     if (highCount > 0) {
                         error("DAST: ${highCount} HIGH-risk alert(s). Fix before deployment.")
