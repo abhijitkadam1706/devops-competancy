@@ -45,7 +45,7 @@ export default function Profile() {
           (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
         setImagePercent(Math.round(progress));
       },
-      (error) => {
+      (_error) => {
         setImageError(true);
       },
       () => {
