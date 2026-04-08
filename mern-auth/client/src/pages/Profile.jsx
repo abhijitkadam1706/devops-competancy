@@ -32,6 +32,7 @@ export default function Profile() {
     if (image) {
       handleFileUpload(image);
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [image]);
   const handleFileUpload = async (image) => {
     const storage = getStorage(app);
@@ -45,7 +46,7 @@ export default function Profile() {
           (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
         setImagePercent(Math.round(progress));
       },
-      (_error) => {
+      () => {
         setImageError(true);
       },
       () => {
