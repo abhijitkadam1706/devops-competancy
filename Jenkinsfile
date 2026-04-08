@@ -179,8 +179,8 @@ json.dump(config, open('/tmp/kaniko-config/config.json', 'w'))
                         -v \${WORKSPACE}:/workspace \\
                         -v /tmp/kaniko-config:/kaniko/.docker \\
                         gcr.io/kaniko-project/executor:latest \\
-                        --context=/workspace \\
-                        --dockerfile=/workspace/Dockerfile \\
+                        --context=/workspace/mern-auth \\
+                        --dockerfile=/workspace/mern-auth/Dockerfile \\
                         --destination=${STAGE_REGISTRY}:${IMAGE_TAG} \\
                         --cache=true \\
                         --cache-repo=${ECR_REGISTRY}/kaniko-cache \\
