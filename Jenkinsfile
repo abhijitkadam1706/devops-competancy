@@ -128,8 +128,8 @@ pipeline {
                 timeout(time: 5, unit: 'MINUTES') {
                     waitForQualityGate abortPipeline: false  // free plan: gate is informational
                 }
-                dir('mern-auth') {
-                    sh 'npx --prefix client vitest run --coverage --passWithNoTests'
+                dir('mern-auth/client') {
+                    sh 'npx vitest run --coverage --passWithNoTests'
                 }
                 script {
                     def covFile = 'mern-auth/client/coverage/coverage-summary.json'
