@@ -135,7 +135,7 @@ pipeline {
                     def covFile = 'mern-auth/client/coverage/coverage-summary.json'
                     if (fileExists(covFile)) {
                         def coverage = sh(
-                            script: "python3 -c \"import json; d=json.load(open('${covFile}')); print(int(d['total']['lines']['pct']))\"",
+                            script: "python3 -c \"import json; d=json.load(open('${covFile}')); pct=d['total']['lines']['pct']; print(0 if str(pct)=='Unknown' else int(pct))\"",
                             returnStdout: true
                         ).trim().toInteger()
                         echo "Line coverage: ${coverage}%"
