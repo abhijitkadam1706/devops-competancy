@@ -1,0 +1,521 @@
+// =====================================================================
+// mern-auth — Enterprise CI/CD Pipeline (ZERO-TRUST v4)
+//
+// ARCHITECTURE:
+//   Jenkins BUILDS  → commits image tag to gitops/staging
+//   ArgoCD  DEPLOYS → watches gitops/staging (auto-sync)
+//   ArgoCD  PROMOTES → gitops/production (PR merge → manual sync)
+//
+// ZERO HARDCODED VALUES:
+//   All ECR URLs, regions, SonarQube config flow from Jenkins Global
+//   Environment Variables set by JCasC (jenkins-casc-config.yaml).
+//   All secrets (JWT, Mongo, Cosign key, GitOps PAT) from Jenkins
+//   Credential Store (backed by AWS SSM Parameter Store).
+//
+// AGENTS:
+//   build-agent    → Stage 1 (Checkout + Build + Test), 2 (Lint+SAST), 3 (Quality Gate), 7 (GitOps)
+//   security-agent → Stage 4 (Kaniko Build + Trivy + Cosign)
+//   test-agent     → Stage 5 (Integration + DAST), 6 (DAST Gate)
+//
+// KEY HARDENING vs v3:
+//   ✅ stash/unstash — workspace resilience across agent boundaries
+//   ✅ Vitest runs in Stage 1 (lcov.info exists before SonarQube in Stage 2)
+//   ✅ Cosign static key from SSM (no interactive OIDC browser flow)
+//   ✅ Trivy --exit-code 1 for CRITICAL only (HIGH = informational)
+//   ✅ ZAP || true removed (rely on -I flag only)
+//   ✅ Git credential.helper (token never appears in process list)
+//   ✅ Kaniko pinned to v1.23.2 (not :latest)
+//   ✅ ECR credentials cleaned up in post.always
+// =====================================================================
+
+pipeline {
+    agent none
+
+    environment {
+        // ── Injected by Jenkins JCasC (jenkins-casc-config.yaml) ─────────────
+        // These are set as Global Environment Variables from SSM values written
+        // by Terraform. Nothing here is hardcoded.
+        AWS_REGION      = "${AWS_REGION}"
+        ECR_REGISTRY    = "${ECR_REGISTRY}"
+        STAGE_REGISTRY  = "${STAGE_REGISTRY}"
+        PROD_REGISTRY   = "${PROD_REGISTRY}"
+        SONAR_PROJECT   = "${SONAR_PROJECT}"
+        SONAR_ORG       = "${SONAR_ORG}"
+        GITOPS_REPO     = "${GITOPS_REPO}"
+
+        // ── Pipeline constants (safe to set here, not sensitive) ──────────────
+        SONAR_URL        = "https://sonarcloud.io"
+        GITOPS_BRANCH    = "main"
+        APP_PORT         = "9191"
+        HEALTH_EP        = "/api/user"
+        MIN_COVERAGE     = "80"
+        KANIKO_VERSION   = "v1.23.2"
+        TRIVY_VERSION    = "0.50.2"
+    }
+
+    options {
+        buildDiscarder(logRotator(numToKeepStr: '20'))
+        timestamps()
+        timeout(time: 60, unit: 'MINUTES')
+        disableConcurrentBuilds()
+        ansiColor('xterm')
+    }
+
+    triggers { githubPush() }
+
+    stages {
+
+        // ──────────────────────────────────────────────────────────────────────
+        // STAGE 1: Checkout, Build & Unit Tests
+        //
+        // WHY VITEST HERE: lcov.info must exist before Stage 2 invokes
+        // sonar-scanner so the coverage report is included in the SonarCloud
+        // quality gate. Running tests in Stage 3 (after SonarQube) is too late.
+        // ──────────────────────────────────────────────────────────────────────
+        stage('1: Checkout, Build & Test') {
+            agent { label 'build-agent' }
+            steps {
+                checkout scm
+                script {
+                    def sha = sh(script: 'git rev-parse --short=8 HEAD', returnStdout: true).trim()
+                    env.IMAGE_TAG = "${BUILD_NUMBER}-${sha}"
+                }
+                echo "🏷️  Branch: ${env.BRANCH_NAME ?: 'manual'} | Tag: ${IMAGE_TAG}"
+
+                dir('mern-auth') {
+                    sh 'npm ci'
+                    sh 'npm ci --prefix client'
+                    sh 'npm run build --prefix client'
+
+                    // Unit tests + coverage — must run BEFORE SonarQube scan
+                    sh 'npx vitest run --coverage --passWithNoTests --prefix client || npx vitest run --coverage --passWithNoTests --root client'
+                }
+
+                // Stash coverage so Stage 3 (Quality Gate) can read it
+                // even if it runs on a different agent workspace
+                stash name: 'coverage-report',
+                      includes: 'mern-auth/client/coverage/**',
+                      allowEmpty: true
+            }
+            post {
+                success { echo '✅ Stage 1 passed — build + tests green' }
+                failure { error '❌ Stage 1 failed — fix build/test errors before proceeding' }
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────────
+        // STAGE 2: Lint + SAST (Parallel)
+        // lcov.info from Stage 1 is already on disk (same build-agent workspace)
+        // ──────────────────────────────────────────────────────────────────────
+        stage('2: Lint & SAST') {
+            agent { label 'build-agent' }
+            options { skipDefaultCheckout(true) }
+            steps {
+                parallel(
+                    'ESLint': {
+                        dir('mern-auth') {
+                            sh 'npm run lint --prefix client'
+                        }
+                    },
+                    'SonarQube': {
+                        withSonarQubeEnv('SonarQube') {
+                            dir('mern-auth') {
+                                sh """
+                                    sonar-scanner \\
+                                      -Dsonar.projectKey=${SONAR_PROJECT} \\
+                                      -Dsonar.organization=${SONAR_ORG} \\
+                                      -Dsonar.sources=api,client/src \\
+                                      -Dsonar.exclusions=**/node_modules/**,client/dist/** \\
+                                      -Dsonar.javascript.lcov.reportPaths=client/coverage/lcov.info \\
+                                      -Dsonar.host.url=${SONAR_URL}
+                                """
+                            }
+                        }
+                    }
+                )
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────────
+        // STAGE 3: Quality Gate + Coverage Enforcement
+        // Waits for SonarCloud webhook, then checks local coverage threshold
+        // ──────────────────────────────────────────────────────────────────────
+        stage('3: Quality Gate') {
+            agent { label 'build-agent' }
+            options { skipDefaultCheckout(true) }
+            steps {
+                timeout(time: 5, unit: 'MINUTES') {
+                    // abortPipeline: false → gate is informational on free SonarCloud plan
+                    waitForQualityGate abortPipeline: false
+                }
+
+                // Retrieve coverage stashed in Stage 1
+                // Safe even if we land on a different workspace path
+                unstash 'coverage-report'
+
+                script {
+                    def covFile = 'mern-auth/client/coverage/coverage-summary.json'
+                    if (fileExists(covFile)) {
+                        def coverage = sh(
+                            script: "python3 -c \"import json; d=json.load(open('${covFile}')); pct=d['total']['lines']['pct']; print(0 if str(pct)=='Unknown' else int(pct))\"",
+                            returnStdout: true
+                        ).trim().toInteger()
+                        echo "📊 Line coverage: ${coverage}%"
+                        if (coverage < MIN_COVERAGE.toInteger()) {
+                            unstable("⚠️  Coverage ${coverage}% below target ${MIN_COVERAGE}% — add tests")
+                        } else {
+                            echo "✅ Coverage gate passed: ${coverage}% ≥ ${MIN_COVERAGE}%"
+                        }
+                    } else {
+                        echo '⚠️  No coverage report found — skipping coverage gate'
+                    }
+                }
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────────
+        // STAGE 4: Kaniko Build + Trivy Scan + Cosign Signing
+        //
+        // Kaniko: Daemonless image build (no Docker socket, no --privileged)
+        // Trivy:  CRITICAL = blocking (exit 1), HIGH = informational (exit 0)
+        // Cosign: Static keypair from SSM — fully automated, no browser OIDC
+        // ──────────────────────────────────────────────────────────────────────
+        stage('4: Kaniko Build, Trivy & Sign') {
+            agent { label 'security-agent' }
+            steps {
+                checkout scm
+
+                // ── Generate ECR credentials for Kaniko ───────────────────────
+                sh """
+                    mkdir -p /tmp/kaniko-config
+                    aws ecr get-login-password --region ${AWS_REGION} | \\
+                        python3 -c "
+import sys, json, base64
+token = sys.stdin.read().strip()
+auth  = base64.b64encode(f'AWS:{token}'.encode()).decode()
+json.dump({'auths': {'${ECR_REGISTRY}': {'auth': auth}}},
+          open('/tmp/kaniko-config/config.json', 'w'))
+"
+                """
+
+                // ── Kaniko build — no Docker daemon, no --privileged ──────────
+                sh """
+                    docker run --rm \\
+                        -v \${WORKSPACE}:/workspace \\
+                        -v /tmp/kaniko-config:/kaniko/.docker \\
+                        gcr.io/kaniko-project/executor:${KANIKO_VERSION} \\
+                        --context=/workspace/mern-auth \\
+                        --dockerfile=/workspace/mern-auth/Dockerfile \\
+                        --destination=${STAGE_REGISTRY}:${IMAGE_TAG} \\
+                        --cache=true \\
+                        --cache-repo=${ECR_REGISTRY}/kaniko-cache \\
+                        --snapshot-mode=redo \\
+                        --compressed-caching=false
+                """
+
+                // ── Trivy: CRITICAL blocks pipeline; HIGH is informational ─────
+                sh """
+                    aws ecr get-login-password --region ${AWS_REGION} | \\
+                        docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                    docker pull ${STAGE_REGISTRY}:${IMAGE_TAG}
+                    mkdir -p /tmp/trivy-out
+
+                    # CRITICAL — blocking (exit-code 1)
+                    docker run --rm \\
+                        -v /var/run/docker.sock:/var/run/docker.sock \\
+                        -v /tmp/trivy-out:/output \\
+                        aquasec/trivy:${TRIVY_VERSION} image \\
+                        --no-progress \\
+                        --exit-code 1 \\
+                        --severity CRITICAL \\
+                        --format json \\
+                        --output /output/trivy-critical-${BUILD_NUMBER}.json \\
+                        ${STAGE_REGISTRY}:${IMAGE_TAG}
+
+                    # HIGH — informational only (exit-code 0)
+                    docker run --rm \\
+                        -v /var/run/docker.sock:/var/run/docker.sock \\
+                        -v /tmp/trivy-out:/output \\
+                        aquasec/trivy:${TRIVY_VERSION} image \\
+                        --no-progress \\
+                        --exit-code 0 \\
+                        --severity HIGH \\
+                        --format json \\
+                        --output /output/trivy-high-${BUILD_NUMBER}.json \\
+                        ${STAGE_REGISTRY}:${IMAGE_TAG}
+
+                    cp /tmp/trivy-out/trivy-critical-${BUILD_NUMBER}.json trivy-critical-${BUILD_NUMBER}.json
+                    cp /tmp/trivy-out/trivy-high-${BUILD_NUMBER}.json     trivy-high-${BUILD_NUMBER}.json
+                """
+
+                // ── SBOM generation (CycloneDX format) ───────────────────────
+                sh """
+                    docker run --rm \\
+                        -v /var/run/docker.sock:/var/run/docker.sock \\
+                        -v /tmp/trivy-out:/output \\
+                        aquasec/trivy:${TRIVY_VERSION} image \\
+                        --no-progress \\
+                        --format cyclonedx \\
+                        --output /output/sbom-${BUILD_NUMBER}.json \\
+                        ${STAGE_REGISTRY}:${IMAGE_TAG}
+                    cp /tmp/trivy-out/sbom-${BUILD_NUMBER}.json sbom-${BUILD_NUMBER}.json
+                """
+
+                // ── Cosign: static key signing via SSM — no browser OIDC ─────
+                withCredentials([
+                    string(credentialsId: 'cosign-private-key', variable: 'COSIGN_KEY_CONTENT'),
+                    string(credentialsId: 'cosign-key-password', variable: 'COSIGN_PASSWORD')
+                ]) {
+                    sh """
+                        # Write key to a temp file (never logged, cleaned in post.always)
+                        COSIGN_KEY_FILE=\$(mktemp /tmp/cosign-key-XXXXXX.key)
+                        printf '%s' "\${COSIGN_KEY_CONTENT}" > "\${COSIGN_KEY_FILE}"
+                        chmod 600 "\${COSIGN_KEY_FILE}"
+
+                        # Sign with static key — fully automated, no OIDC needed
+                        COSIGN_PASSWORD="\${COSIGN_PASSWORD}" \\
+                            cosign sign --yes \\
+                            --key "\${COSIGN_KEY_FILE}" \\
+                            ${STAGE_REGISTRY}:${IMAGE_TAG}
+
+                        echo "✅ Image signed: ${STAGE_REGISTRY}:${IMAGE_TAG}"
+                        rm -f "\${COSIGN_KEY_FILE}"
+                    """
+                }
+
+                archiveArtifacts artifacts: "trivy-critical-${BUILD_NUMBER}.json, trivy-high-${BUILD_NUMBER}.json, sbom-${BUILD_NUMBER}.json",
+                    allowEmptyArchive: true
+
+                // Stash ZAP needs to know the image tag — pass it forward
+                stash name: 'image-tag-meta', includes: '.gitignore', allowEmpty: true
+            }
+            post {
+                always {
+                    sh '''
+                        rm -rf /tmp/kaniko-config
+                        rm -rf /tmp/trivy-out
+                        rm -f ~/.docker/config.json
+                    '''
+                }
+                success { echo "✅ Stage 4 passed — image built, scanned, signed" }
+                failure { error "❌ Stage 4 failed — CRITICAL vulnerabilities found or build error" }
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────────
+        // STAGE 5: Integration Tests + DAST
+        //
+        // Isolated Docker network — never uses --network host
+        // Secrets from Jenkins credentials — never hardcoded
+        // -I flag: ZAP suppresses informational alerts but not container errors
+        // || true REMOVED: if Docker daemon crashes, the stage should fail
+        // ──────────────────────────────────────────────────────────────────────
+        stage('5: Integration Tests & DAST') {
+            agent { label 'test-agent' }
+            steps {
+                sh """
+                    aws ecr get-login-password --region ${AWS_REGION} | \\
+                        docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                """
+
+                // Clean up any leftover containers from a previous failed run
+                sh 'docker rm -f mern-auth-test test-mongo 2>/dev/null || true'
+                sh 'docker network rm test-net 2>/dev/null || true'
+                sh 'docker network create test-net'
+
+                withCredentials([
+                    string(credentialsId: 'test-jwt-secret',      variable: 'JWT_SECRET'),
+                    string(credentialsId: 'test-mongo-password',  variable: 'MONGO_PASS')
+                ]) {
+                    sh """
+                        docker run -d --name test-mongo \\
+                            --network test-net \\
+                            -e MONGO_INITDB_ROOT_USERNAME=root \\
+                            -e MONGO_INITDB_ROOT_PASSWORD=\${MONGO_PASS} \\
+                            mongo:6.0
+                        sleep 10
+                    """
+                    sh """
+                        docker run -d --name mern-auth-test \\
+                            --network test-net \\
+                            -p ${APP_PORT}:${APP_PORT} \\
+                            -e NODE_ENV=test \\
+                            -e PORT=${APP_PORT} \\
+                            -e MONGODB_URI=mongodb://root:\${MONGO_PASS}@test-mongo:27017/mern-auth-test?authSource=admin \\
+                            -e JWT_SECRET=\${JWT_SECRET} \\
+                            ${STAGE_REGISTRY}:${IMAGE_TAG}
+                        sleep 15
+                    """
+                }
+
+                // Health check — fail fast if app did not start
+                sh """
+                    STATUS=\$(curl -sf -o /dev/null -w '%{http_code}' http://localhost:${APP_PORT}${HEALTH_EP})
+                    echo "🏥 Health check: HTTP \$STATUS"
+                    [ "\$STATUS" = "200" ] || { echo "FATAL: Health check failed (HTTP \$STATUS)"; exit 1; }
+                """
+
+                // Newman API integration tests — no || true (failures must surface)
+                sh """
+                    newman run tests/integration/mern-auth-collection.json \\
+                        --env-var "baseUrl=http://localhost:${APP_PORT}" \\
+                        --reporters cli,junit \\
+                        --reporter-junit-export integration-results.xml
+                """
+                junit 'integration-results.xml'
+
+                // OWASP ZAP DAST — baseline scan
+                // -I: ignore rules that would abort (informational findings OK here)
+                // Result XML evaluated in Stage 6 gate (not here)
+                sh """
+                    mkdir -p zap-reports && chmod 777 zap-reports
+                    docker run --rm \\
+                        --network test-net \\
+                        -v \${WORKSPACE}/zap-reports:/zap/wrk/:rw \\
+                        ghcr.io/zaproxy/zaproxy:stable zap-baseline.py \\
+                        -t http://mern-auth-test:${APP_PORT} \\
+                        -r zap-report.html \\
+                        -x zap-report.xml \\
+                        -I
+                """
+
+                // Stash ZAP results so Stage 6 can access them
+                stash name: 'zap-reports', includes: 'zap-reports/**'
+
+                archiveArtifacts artifacts: 'zap-reports/**, integration-results.xml',
+                    allowEmptyArchive: true
+            }
+            post {
+                always {
+                    sh 'docker rm -f mern-auth-test test-mongo 2>/dev/null || true'
+                    sh 'docker network rm test-net 2>/dev/null || true'
+                    sh 'rm -f ~/.docker/config.json'
+                }
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────────
+        // STAGE 6: DAST Quality Gate
+        // Evaluates ZAP XML from Stage 5 stash — no checkout needed
+        // ──────────────────────────────────────────────────────────────────────
+        stage('6: DAST Quality Gate') {
+            agent { label 'test-agent' }
+            options { skipDefaultCheckout(true) }
+            steps {
+                // Retrieve ZAP results regardless of agent workspace path
+                unstash 'zap-reports'
+                script {
+                    def zapFile = 'zap-reports/zap-report.xml'
+                    if (!fileExists(zapFile)) {
+                        error("❌ ZAP report missing — DAST scan did not complete")
+                    }
+                    // Count HIGH-risk findings (riskcode=3) using sh grep
+                    // NOTE: Groovy Matcher.count() is blocked by Jenkins sandbox
+                    def highCount = sh(
+                        script: "grep -o '<riskcode>3</riskcode>' ${zapFile} | wc -l",
+                        returnStdout: true
+                    ).trim().toInteger()
+                    echo "🔍 ZAP HIGH-risk alerts: ${highCount}"
+                    if (highCount > 0) {
+                        error("❌ DAST gate: ${highCount} HIGH-risk alert(s) found — fix before deployment")
+                    }
+                    echo '✅ DAST gate passed — no HIGH-risk alerts'
+                }
+            }
+        }
+
+        // ──────────────────────────────────────────────────────────────────────
+        // STAGE 7: Update GitOps Repository
+        //
+        // Jenkins commits the new image tag to gitops/staging/patch-image.yaml
+        // ArgoCD auto-syncs staging within ~3 minutes of this commit.
+        //
+        // SECURITY: Git credential.helper is used (token never in process list)
+        // Credentials are cleaned up in post.always even if stage fails.
+        //
+        // PRODUCTION PROMOTION:
+        //   1. Open PR: update gitops/production/patch-image.yaml
+        //   2. Release manager reviews and merges
+        //   3. ArgoCD syncs production (manual sync button in ArgoCD UI)
+        // ──────────────────────────────────────────────────────────────────────
+        stage('7: Update GitOps (Staging)') {
+            agent { label 'build-agent' }
+            options { skipDefaultCheckout(true) }
+            steps {
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: 'gitops-repo-creds',
+                        usernameVariable: 'GIT_USER',
+                        passwordVariable: 'GIT_TOKEN'
+                    )
+                ]) {
+                    sh """
+                        rm -rf gitops-workspace
+                        git clone ${GITOPS_REPO} gitops-workspace
+                        cd gitops-workspace
+
+                        # Configure git identity for commit
+                        git config user.email "jenkins@ci.internal"
+                        git config user.name  "Jenkins CI"
+
+                        # Secure credential helper — token never appears in ps aux
+                        git config credential.helper "store --file /tmp/.git-credentials-${BUILD_NUMBER}"
+                        printf 'https://%s:%s@github.com\\n' "\${GIT_USER}" "\${GIT_TOKEN}" \\
+                            > /tmp/.git-credentials-${BUILD_NUMBER}
+                        chmod 600 /tmp/.git-credentials-${BUILD_NUMBER}
+
+                        # Update image tag in staging overlay using kustomize
+                        cd gitops/staging
+                        kustomize edit set image mern-auth=${STAGE_REGISTRY}:${IMAGE_TAG}
+                        cd ../..
+
+                        # Commit only if there are actual changes (idempotent)
+                        git add -A
+                        git diff --cached --quiet || \\
+                            git commit -m "ci(staging): deploy ${IMAGE_TAG} [build #${BUILD_NUMBER}]"
+                        git push origin ${GITOPS_BRANCH}
+
+                        echo ""
+                        echo "✅ GitOps staging updated → ArgoCD will auto-sync within 3 min"
+                        echo ""
+                        echo "📋 PRODUCTION PROMOTION STEPS:"
+                        echo "   1. In ${GITOPS_REPO}, open a PR:"
+                        echo "      Update gitops/production/patch-image.yaml"
+                        echo "      newTag: ${IMAGE_TAG}"
+                        echo "   2. Release manager reviews diff and merges PR"
+                        echo "   3. Click Sync in ArgoCD UI for production app"
+                    """
+                }
+            }
+            post {
+                always {
+                    sh """
+                        rm -rf gitops-workspace
+                        rm -f /tmp/.git-credentials-${BUILD_NUMBER}
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo """
+✅ CI/CD Pipeline COMPLETE — Build #${BUILD_NUMBER}
+   Image Tag:  ${env.IMAGE_TAG}
+   Staging:    ArgoCD will auto-deploy within ~3 minutes
+   Production: Open a PR in the GitOps repo to promote
+            """
+        }
+        failure {
+            echo "❌ Pipeline FAILED — Build #${BUILD_NUMBER}. Review stage logs above."
+        }
+        always {
+            node('build-agent') {
+                archiveArtifacts artifacts: "trivy-*.json, sbom-*.json, zap-reports/**, integration-results.xml",
+                    allowEmptyArchive: true
+                cleanWs()
+            }
+        }
+    }
+}

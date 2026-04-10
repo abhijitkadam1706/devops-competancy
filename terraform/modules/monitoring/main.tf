@@ -1,11 +1,13 @@
 # =============================================================================
-# Monitoring Module - CloudWatch Alarms + SNS + Prometheus Integration
-# Maps to existing prometheus/prometheus-config.yaml in the repo
+# Monitoring Module — Main (Updated)
+# Adds: kube-prometheus-stack via Helm (Prometheus + Grafana + Alertmanager)
+# Keeps: existing CloudWatch alarms + SNS + Dashboard
 # =============================================================================
 
 data "aws_region" "current" {}
 
-# ── SNS Topic for Alerts ──────────────────────────────────────────────────────
+# ── SNS Topic for CloudWatch Alerts ──────────────────────────────────────────
+
 resource "aws_sns_topic" "alerts" {
   name              = "${var.cluster_name}-alerts"
   kms_master_key_id = "alias/aws/sns"
@@ -20,19 +22,21 @@ resource "aws_sns_topic_subscription" "email" {
 }
 
 # ── CloudWatch Log Groups ─────────────────────────────────────────────────────
+
 resource "aws_cloudwatch_log_group" "app" {
-  name              = "/mern-auth/${var.environment}/application"
+  name              = "/${var.cluster_name}/${var.environment}/application"
   retention_in_days = 90
   tags              = { Name = "${var.cluster_name}-app-logs" }
 }
 
 resource "aws_cloudwatch_log_group" "api" {
-  name              = "/mern-auth/${var.environment}/api"
+  name              = "/${var.cluster_name}/${var.environment}/api"
   retention_in_days = 90
   tags              = { Name = "${var.cluster_name}-api-logs" }
 }
 
-# ── CloudWatch Alarms — EKS Node ─────────────────────────────────────────────
+# ── CloudWatch Alarms ─────────────────────────────────────────────────────────
+
 resource "aws_cloudwatch_metric_alarm" "node_cpu_high" {
   alarm_name          = "${var.cluster_name}-node-cpu-high"
   comparison_operator = "GreaterThanThreshold"
@@ -63,7 +67,6 @@ resource "aws_cloudwatch_metric_alarm" "node_memory_high" {
   dimensions          = { ClusterName = var.cluster_name }
 }
 
-# ── CloudWatch Alarm — Application Error Rate ─────────────────────────────────
 resource "aws_cloudwatch_metric_alarm" "app_error_rate" {
   alarm_name          = "${var.cluster_name}-app-error-rate"
   comparison_operator = "GreaterThanThreshold"
@@ -73,12 +76,11 @@ resource "aws_cloudwatch_metric_alarm" "app_error_rate" {
   period              = "60"
   statistic           = "Average"
   threshold           = "5"
-  alarm_description   = "App 5xx error rate > 5% — possible issue"
+  alarm_description   = "App 5xx error rate > 5%"
   alarm_actions       = [aws_sns_topic.alerts.arn]
   treat_missing_data  = "notBreaching"
 }
 
-# ── CloudWatch Alarm — DocumentDB CPU ────────────────────────────────────────
 resource "aws_cloudwatch_metric_alarm" "docdb_cpu" {
   alarm_name          = "${var.cluster_name}-docdb-cpu"
   comparison_operator = "GreaterThanThreshold"
@@ -94,53 +96,115 @@ resource "aws_cloudwatch_metric_alarm" "docdb_cpu" {
 }
 
 # ── CloudWatch Dashboard ──────────────────────────────────────────────────────
+
 resource "aws_cloudwatch_dashboard" "main" {
   dashboard_name = "${var.cluster_name}-ops"
 
   dashboard_body = jsonencode({
     widgets = [
       {
-        type   = "metric"
-        x      = 0
-        y      = 0
-        width  = 12
-        height = 6
+        type = "metric", x = 0, y = 0, width = 12, height = 6
         properties = {
           title   = "EKS Node CPU"
           region  = data.aws_region.current.name
           metrics = [["ContainerInsights", "node_cpu_utilization", "ClusterName", var.cluster_name]]
-          period  = 300
-          view    = "timeSeries"
+          period  = 300, view = "timeSeries"
         }
       },
       {
-        type   = "metric"
-        x      = 12
-        y      = 0
-        width  = 12
-        height = 6
+        type = "metric", x = 12, y = 0, width = 12, height = 6
         properties = {
           title   = "App 5xx Error Rate"
           region  = data.aws_region.current.name
           metrics = [["AWS/ApplicationELB", "5xxErrorRate"]]
-          period  = 60
-          view    = "timeSeries"
+          period  = 60, view = "timeSeries"
         }
       },
       {
-        type   = "metric"
-        x      = 0
-        y      = 6
-        width  = 12
-        height = 6
+        type = "metric", x = 0, y = 6, width = 12, height = 6
         properties = {
           title   = "DocumentDB CPU"
           region  = data.aws_region.current.name
           metrics = [["AWS/DocDB", "CPUUtilization", "DBClusterIdentifier", var.docdb_cluster_id]]
-          period  = 300
-          view    = "timeSeries"
+          period  = 300, view = "timeSeries"
         }
       }
     ]
   })
+}
+
+# ── kube-prometheus-stack (Prometheus + Grafana + Alertmanager) ────────────────
+# Installed via Helm — gives in-cluster metrics with pre-built Grafana dashboards.
+# Grafana admin password stored in SSM (no hardcoding).
+
+resource "helm_release" "kube_prometheus_stack" {
+  name             = "kube-prometheus-stack"
+  repository       = "https://prometheus-community.github.io/helm-charts"
+  chart            = "kube-prometheus-stack"
+  version          = var.prometheus_chart_version
+  namespace        = "monitoring"
+  create_namespace = true
+  wait             = true
+  wait_for_jobs    = true
+  timeout          = 600
+  atomic           = true
+  cleanup_on_fail  = true
+
+  # Override only what's necessary — let Helm defaults handle the rest
+  set {
+    name  = "grafana.adminPassword"
+    value = random_password.grafana_admin.result
+  }
+
+  set {
+    name  = "grafana.service.type"
+    value = "LoadBalancer"
+  }
+
+  set {
+    name  = "grafana.service.annotations.service\\.beta\\.kubernetes\\.io/aws-load-balancer-scheme"
+    value = "internet-facing"
+  }
+
+  set {
+    name  = "prometheus.prometheusSpec.retention"
+    value = "30d"
+  }
+
+  set {
+    name  = "prometheus.prometheusSpec.storageSpec.volumeClaimTemplate.spec.resources.requests.storage"
+    value = "50Gi"
+  }
+
+  set {
+    name  = "alertmanager.alertmanagerSpec.storage.volumeClaimTemplate.spec.resources.requests.storage"
+    value = "10Gi"
+  }
+
+  # Enable scraping of ArgoCD metrics
+  set {
+    name  = "additionalServiceMonitors[0].name"
+    value = "argocd-metrics"
+  }
+}
+
+# Random password for Grafana (generated once, stored in SSM)
+resource "random_password" "grafana_admin" {
+  length           = 24
+  special          = true
+  override_special = "!#$%&*()-_=+[]{}<>:?"
+}
+
+resource "aws_ssm_parameter" "grafana_admin_password" {
+  name        = "/${var.cluster_name}/monitoring/grafana-admin-password"
+  description = "Grafana admin password — managed by Terraform"
+  type        = "SecureString"
+  value       = random_password.grafana_admin.result
+  overwrite   = true
+
+  tags = {
+    Name        = "${var.cluster_name}-grafana-password"
+    ManagedBy   = "Terraform"
+    Environment = var.environment
+  }
 }

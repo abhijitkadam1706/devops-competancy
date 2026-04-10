@@ -1,0 +1,12 @@
+# =============================================================================
+# Global Bootstrap — Example Variable Values
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is listed in .gitignore — never commit it with secrets.
+# =============================================================================
+
+aws_region   = "ap-southeast-1"
+project_name = "mern-auth"
+environment  = "production"
+
+# Set to true ONLY in dev environments when you want to tear down everything
+state_bucket_force_destroy = false

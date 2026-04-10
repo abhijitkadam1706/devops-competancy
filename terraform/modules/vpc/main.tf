@@ -130,18 +130,69 @@ resource "aws_default_security_group" "default" {
 }
 
 # ── VPC Flow Logs (SOC2 Compliance) ──────────────────────────────────────────
+#
+# ROOT CAUSE FIX — ResourceAlreadyExistsException
+# ─────────────────────────────────────────────────────────────────────────────
+# The log group /aws/vpc/.../flow-logs persists in AWS after terraform destroy
+# because AWS retains CloudWatch log groups that contain log stream data.
+# On the next apply, Terraform tried to CREATE it again → AlreadyExistsException.
+#
+# FIX: Stop managing the log group as a Terraform resource.
+# Instead, create it idempotently via AWS CLI (never fails on already-exists),
+# then READ it with a data source. The log group lifecycle is now:
+#   - Created on first apply (or already exists → no-op)
+#   - NEVER destroyed by Terraform (intentional — preserves audit logs)
+#   - Retention + tags managed via AWS CLI in the null_resource
+# ─────────────────────────────────────────────────────────────────────────────
+
+locals {
+  flow_log_group_name = "/aws/vpc/${var.cluster_name}/flow-logs"
+}
+
+data "aws_region" "current" {}
+
+resource "null_resource" "ensure_flow_log_group" {
+  # Re-run if cluster name changes (log group name changes)
+  triggers = {
+    log_group_name = local.flow_log_group_name
+  }
+
+  provisioner "local-exec" {
+    interpreter = ["PowerShell", "-Command"]
+    command     = <<-EOT
+      $name   = "${local.flow_log_group_name}"
+      $region = "${data.aws_region.current.name}"
+
+      Write-Host "Ensuring CloudWatch log group exists (idempotent): $name"
+
+      # create-log-group exits 0 if created, non-zero if already exists — suppress the error
+      aws logs create-log-group --log-group-name $name --region $region 2>&1 | Out-Null
+
+      # set-retention-policy is always idempotent
+      aws logs put-retention-policy `
+        --log-group-name $name `
+        --retention-in-days 90 `
+        --region $region
+
+      Write-Host "Log group ready."
+    EOT
+  }
+}
+
+# Read the log group that was just ensured to exist above
+data "aws_cloudwatch_log_group" "flow_log" {
+  name       = local.flow_log_group_name
+  depends_on = [null_resource.ensure_flow_log_group]
+}
+
 resource "aws_flow_log" "main" {
   iam_role_arn    = aws_iam_role.flow_log.arn
-  log_destination = aws_cloudwatch_log_group.flow_log.arn
+  log_destination = data.aws_cloudwatch_log_group.flow_log.arn
   traffic_type    = "ALL"
   vpc_id          = aws_vpc.main.id
   tags            = { Name = "${var.cluster_name}-flow-logs" }
-}
 
-resource "aws_cloudwatch_log_group" "flow_log" {
-  name              = "/aws/vpc/${var.cluster_name}/flow-logs"
-  retention_in_days = 90
-  tags              = { Name = "${var.cluster_name}-flow-logs" }
+  depends_on = [null_resource.ensure_flow_log_group]
 }
 
 resource "aws_iam_role" "flow_log" {

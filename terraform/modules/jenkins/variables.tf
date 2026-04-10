@@ -1,5 +1,6 @@
 # =============================================================================
-# Jenkins Module — Variables
+# Jenkins Module — Variables (Updated)
+# Added: aws_region, ecr_* variables so no values are hardcoded in user_data
 # =============================================================================
 
 variable "cluster_name" {
@@ -17,6 +18,11 @@ variable "vpc_id" {
   type        = string
 }
 
+variable "aws_region" {
+  description = "AWS region — injected into user_data scripts (replaces hardcoded region)"
+  type        = string
+}
+
 variable "public_subnet_id" {
   description = "Public subnet for the Jenkins Master (needs HTTP access for the UI)"
   type        = string
@@ -28,26 +34,26 @@ variable "private_subnet_id" {
 }
 
 variable "allowed_cidr_blocks" {
-  description = "CIDR blocks allowed to reach Jenkins Master UI on port 8080 (restrict to your office/VPN IP)"
+  description = "CIDR blocks allowed to reach Jenkins Master UI on port 8080"
   type        = list(string)
-  default     = ["0.0.0.0/0"]   # Restrict this to your IP in production!
 }
 
-# ── Instance Types ─────────────────────────────────────────────────────────── 
+# ── Instance Types ─────────────────────────────────────────────────────────────
+
 variable "master_instance_type" {
   description = "EC2 type for Jenkins Master Controller"
   type        = string
-  default     = "t3.large"
+  default     = "t3.medium"
 }
 
 variable "build_agent_instance_type" {
   description = "EC2 type for build-agent (Node.js compile, lint, GitOps commit)"
   type        = string
-  default     = "t3.medium"
+  default     = "t3.large"
 }
 
 variable "security_agent_instance_type" {
-  description = "EC2 type for security-agent (Kaniko build, Trivy scan) — needs extra RAM"
+  description = "EC2 type for security-agent (Kaniko build, Trivy scan)"
   type        = string
   default     = "t3.large"
 }
@@ -55,31 +61,76 @@ variable "security_agent_instance_type" {
 variable "test_agent_instance_type" {
   description = "EC2 type for test-agent (Docker networking, Newman, ZAP DAST)"
   type        = string
-  default     = "t3.medium"
+  default     = "t3.large"
 }
 
-# ── IAM Instance Profiles ────────────────────────────────────────────────────
+# ── IAM Instance Profiles ─────────────────────────────────────────────────────
+
 variable "master_instance_profile" {
-  description = "IAM instance profile for Jenkins Master (SSM only)"
+  description = "IAM instance profile for Jenkins Master (SSM read + describe EKS)"
   type        = string
 }
 
 variable "build_agent_instance_profile" {
-  description = "IAM instance profile for build-agent (SSM + read Git)"
+  description = "IAM instance profile for build-agent (SSM read, ECR read)"
   type        = string
 }
 
 variable "security_agent_instance_profile" {
-  description = "IAM instance profile for security-agent (SSM + ECR push)"
+  description = "IAM instance profile for security-agent (SSM read, ECR push, Cosign)"
   type        = string
 }
 
 variable "test_agent_instance_profile" {
-  description = "IAM instance profile for test-agent (SSM + ECR pull, Docker)"
+  description = "IAM instance profile for test-agent (SSM read, ECR pull)"
   type        = string
 }
 
+# ── ECR (passed from root, computed from data sources — NOT hardcoded) ─────────
+
+variable "ecr_registry" {
+  description = "ECR registry base URL (account.dkr.ecr.region.amazonaws.com)"
+  type        = string
+}
+
+variable "ecr_stage_repo" {
+  description = "Full URI of the staging ECR repository"
+  type        = string
+}
+
+variable "ecr_prod_repo" {
+  description = "Full URI of the production ECR repository"
+  type        = string
+}
+
+# ── Tool Versions (pinned — bump in tfvars to upgrade) ────────────────────────
+
+variable "sonar_scanner_version" {
+  description = "SonarScanner CLI version to install on build-agent"
+  type        = string
+  default     = "5.0.1.3006"
+}
+
+variable "trivy_version" {
+  description = "Trivy version to install on security-agent"
+  type        = string
+  default     = "0.50.2"
+}
+
+variable "cosign_version" {
+  description = "Cosign version to install on security-agent"
+  type        = string
+  default     = "v2.2.2"
+}
+
+variable "kustomize_version" {
+  description = "Kustomize version to install on build-agent and master"
+  type        = string
+  default     = "v5.3.0"
+}
+
 # ── AMI ───────────────────────────────────────────────────────────────────────
+
 variable "ami_id" {
   description = "Amazon Linux 2023 AMI. Leave blank to auto-resolve the latest."
   type        = string

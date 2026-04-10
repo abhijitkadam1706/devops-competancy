@@ -1,57 +1,71 @@
-# Files to never commit to Git
-# ============================================================
+# =============================================================================
+# Root .gitignore — DevOps Competency-2
+# =============================================================================
 
-# --- SECRETS & CREDENTIALS (NEVER commit these) ---
-.env
-.env.*
-*.env
-secrets.tfvars
-*.secret.tfvars
+# ── Terraform ─────────────────────────────────────────────────────────────────
+**/.terraform/
+**/.terraform.lock.hcl
+**/terraform.tfstate
+**/terraform.tfstate.backup
+**/terraform.tfstate.*.backup
+**/.terraform.tfstate.lock.info
+# tfvars files with secrets — the committed terraform.tfvars has NO secrets
+# but any local overrides go here
+**/terraform.tfvars.local
+**/secrets.tfvars
+**/override.tf
+**/override.tf.json
 
-# --- TERRAFORM STATE (use S3 remote backend instead) ---
-*.tfstate
-*.tfstate.backup
-.terraform/
-*.tfplan
-crash.log
-crash.*.log
-override.tf
-override.tf.json
-*_override.tf
+# ── Cosign Keys — NEVER commit private keys ───────────────────────────────────
+cosign.key
+cosign.pub
+*.key
+*.pem
 
-# --- NODE.JS (application dependencies, too large for Git) ---
+# ── Editor artifacts ──────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Node.js ───────────────────────────────────────────────────────────────────
 node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+.npm
+.yarn
 
-# --- BUILD ARTIFACTS ---
-dist/
-build/
+# ── Build artifacts ───────────────────────────────────────────────────────────
+mern-auth/client/dist/
+mern-auth/client/coverage/
 *.log
 
-# --- OS GENERATED FILES ---
-.DS_Store
-Thumbs.db
-desktop.ini
+# ── CI/CD artifacts (generated during pipeline runs) ─────────────────────────
+trivy-*.json
+sbom-*.json
+zap-reports/
+integration-results.xml
+gitops-workspace/
 
-# --- LARGE BINARY / DOCUMENT FILES (not needed in code repo) ---
-*.pdf
-*.docx
-*.xlsx
-*.pptx
-*.png
-*.jpg
-*.jpeg
-*.gif
-# Keep the CI/CD architecture diagram if needed:
-# !cicd_architecture_final.png
+# ── Git credentials (security) ────────────────────────────────────────────────
+.git-credentials*
+/tmp/.git-credentials*
 
-# --- TEMPORARY / SCRATCH FILES ---
-gen_diagram.py
-gen_docx.py
-*.txt
-
-# --- PYTHON CACHE ---
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
+*.pyo
+.env
+venv/
+
+# ── Docker ────────────────────────────────────────────────────────────────────
+.dockerignore.local
+
+# ── Backup files ─────────────────────────────────────────────────────────────
+*.bak
+*.backup
+*.orig

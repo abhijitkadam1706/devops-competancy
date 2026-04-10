@@ -1,170 +1,203 @@
-version: "2.0"
-
-server:
-  port: 8000
-
-sonarqube:
-  # URL must match SONAR_URL in Jenkinsfile
-  serverUrl: http://sonarqube:9000
+# =============================================================================
+# Jenkins Configuration as Code (JCasC)
+#
+# This file is the SINGLE SOURCE OF TRUTH for Jenkins configuration.
+# All environment-specific values (ECR URLs, SonarQube project, GitOps repo)
+# are injected at bootstrap time from AWS SSM via the Jenkins startup script.
+#
+# HOW IT WORKS:
+#   1. Terraform writes ECR URLs, region etc. to SSM Parameter Store
+#   2. Jenkins master user_data reads those SSM values at boot
+#   3. Jenkins master writes them as OS environment variables
+#   4. JCasC reads the OS env vars via ${VAR_NAME} syntax below
+#   5. Jenkinsfile reads them via Jenkins Global Env (no hardcoding needed)
+#
+# TO RELOAD:  Manage Jenkins → Reload Configuration from Disk
+#             OR: POST /reload-configuration-as-code/ with admin token
+# =============================================================================
 
 jenkins:
-  systemMessage: |
-    =======================================================
-    Jenkins CI/CD — mern-auth  |  PRCICD-001 / PRCICD-002
-    Master-Slave Architecture  |  K8s Agents  |  Prometheus
-    =======================================================
+  systemMessage: "mern-auth Enterprise CI — Managed by JCasC. Do not edit manually."
+  numExecutors: 0    # Master runs no jobs — builds happen on agents only
 
-  # ---- Global tool versions ----
-  tool:
-    nodejs:
-      installations:
-        - name:    NodeJS-20
-          version: "20.12.2"
-    sonarRunner:
-      installations:
-        - name: SonarQube-Scanner-5
-          properties:
-            - key:   sonar.host.url
-              value: http://sonarqube:9000
+  # ── Security ────────────────────────────────────────────────────────────────
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id:       "admin"
+          password: "${JENKINS_ADMIN_PASSWORD}"   # Read from SSM at boot
 
-  # ---- Credentials (base templates — values injected at deploy time) ----
-  credentials:
-    system:
-      domainCredentials:
-        - credentials:
-            - usernamePassword:
-                id:          registry-creds
-                username:    registry-user
-                password:    "${REGISTRY_PASSWORD}"
-                description: Container registry credentials
-            - string:
-                id:    sonar-token
-                secret: "${SONAR_TOKEN}"
+  authorizationStrategy:
+    roleBased:
+      roles:
+        global:
+          - name: "admin"
+            description: "Administrators"
+            permissions:
+              - "Overall/Administer"
+            entries:
+              - user: "admin"
+          - name: "readonly"
+            description: "Read-only access for auditors"
+            permissions:
+              - "Overall/Read"
+              - "Job/Read"
+              - "View/Read"
 
-  # ---- SonarQube integration ----
-  sonarqube:
+  # ── Global Environment Variables ─────────────────────────────────────────────
+  # All values read from OS environment (set by user_data from SSM).
+  # Nothing hardcoded here — change values by updating SSM parameters.
+  globalNodeProperties:
+    - envVars:
+        env:
+          - key:   "AWS_REGION"
+            value: "${AWS_REGION}"
+          - key:   "ECR_REGISTRY"
+            value: "${ECR_REGISTRY}"
+          - key:   "STAGE_REGISTRY"
+            value: "${ECR_STAGE_REPO}"
+          - key:   "PROD_REGISTRY"
+            value: "${ECR_PROD_REPO}"
+          - key:   "SONAR_PROJECT"
+            value: "${SONAR_PROJECT}"
+          - key:   "SONAR_ORG"
+            value: "${SONAR_ORG}"
+          - key:   "GITOPS_REPO"
+            value: "${GITOPS_REPO}"
+
+  # ── Pipeline Options ─────────────────────────────────────────────────────────
+  views:
+    - all:
+        name: "all"
+
+# ── Credentials ──────────────────────────────────────────────────────────────
+# All secrets are injected from SSM at JCasC load time.
+# Jenkins never stores plaintext — values come from ${} OS env vars.
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          # ── SSH key for master → agent connections ────────────────────────────
+          # Uses fileOnMaster to avoid multiline PEM env var issues in sysconfig.
+          # File is written to disk by the EC2 user_data bootstrap script.
+          - basicSSHUserPrivateKey:
+              scope:       GLOBAL
+              id:          "jenkins-ssh-agent-key"
+              description: "SSH key for Jenkins master → agent node connections"
+              username:    "jenkins-agent"
+              privateKeySource:
+                fileOnMaster:
+                  privateKeyFile: "/var/lib/jenkins/.ssh/agent_key"
+
+          - string:
+              scope:       GLOBAL
+              id:          "sonarqube-token"
+              description: "SonarCloud API token"
+              secret:      "${SONARCLOUD_TOKEN}"
+
+          - usernamePassword:
+              scope:       GLOBAL
+              id:          "gitops-repo-creds"
+              description: "GitHub PAT for GitOps repo commits"
+              username:    "${GITHUB_USERNAME}"
+              password:    "${GITHUB_PAT}"
+
+          - string:
+              scope:       GLOBAL
+              id:          "test-jwt-secret"
+              description: "JWT secret for integration test containers"
+              secret:      "${TEST_JWT_SECRET}"
+
+          - string:
+              scope:       GLOBAL
+              id:          "test-mongo-password"
+              description: "MongoDB password for integration test containers"
+              secret:      "${TEST_MONGO_PASS}"
+
+          # cosign-private-key PEM is written to /var/lib/jenkins/cosign-private-key.pem
+          # at EC2 boot by user_data. Jenkinsfile references the file path directly.
+          # Only the password (single-line string) is stored as a credential here.
+          - string:
+              scope:       GLOBAL
+              id:          "cosign-key-password"
+              description: "Password protecting the Cosign private key"
+              secret:      "${COSIGN_KEY_PASSWORD}"
+
+# ── SonarQube Server ──────────────────────────────────────────────────────────
+unclassified:
+  sonarGlobalConfiguration:
+    buildWrapperEnabled: false
     installations:
-      - name:              SonarQube
-        serverUrl:         http://sonarqube:9000
-        credentialsId:     sonar-token
-        webhookSecretId:   ""
+      - name:             "SonarQube"
+        serverUrl:        "https://sonarcloud.io"
+        credentialsId:    "sonarqube-token"
+        mojoVersion:      ""
 
-  # ---- Slack integration ----
-  slackNotifier:
-    teamDomain:      your-workspace
-    tokenCredentialId: slack-token
-    botUser:         true
+  # Git SCM
+  scmGit:
+    globalConfigName:  "Jenkins CI"
+    globalConfigEmail: "jenkins@ci.internal"
 
-  # ---- Kubernetes Cloud (Master → Slave provisioning) ----
-  clouds:
-    - kubernetes:
-        name:              kubernetes
-        serverUrl:         https://kubernetes.default.svc
-        namespace:         cicd
-        jenkinsUrl:        http://jenkins-master-svc:8080
-        jenkinsTunnel:     jenkins-master-svc:50000
-        containerCap:      20
-        connectTimeout:    5
-        readTimeout:       15
-        maxRequestsPerHost: 64
+  # Build discard — keep 20 builds, 30 days max
+  buildDiscarders:
+    configuredBuildDiscarders:
+      - "jobBuildDiscarder"
 
-        templates:
-          # ---- Build Agent ----
-          - name:            build-agent
-            label:           build-agent
-            namespace:       cicd
-            nodeUsageMode:   EXCLUSIVE
-            idleMinutes:     0         # Terminate immediately when idle
-            containers:
-              - name:        jnlp
-                image:       jenkins/inbound-agent:3206.vb_15dcf73f6a_9-1
-                alwaysPullImage: true
-                resourceRequestCpu:    200m
-                resourceRequestMemory: 256Mi
-                resourceLimitCpu:    500m
-                resourceLimitMemory: 512Mi
-              - name:  node
-                image: node:20-alpine
-                command: cat
-                ttyEnabled: true
-                resourceRequestCpu:    500m
-                resourceRequestMemory: 512Mi
-                resourceLimitCpu:    "2"
-                resourceLimitMemory: 2Gi
-              - name:  docker
-                image: docker:24-dind
-                privileged: true
-                resourceRequestCpu:    500m
-                resourceRequestMemory: 512Mi
-              - name:  trivy
-                image: aquasec/trivy:0.51.4
-                command: cat
-                ttyEnabled: true
-                resourceRequestCpu:    200m
-                resourceRequestMemory: 256Mi
-              - name:  sonar-scanner
-                image: sonarsource/sonar-scanner-cli:5
-                command: cat
-                ttyEnabled: true
-                resourceRequestCpu:    200m
-                resourceRequestMemory: 256Mi
+# ── Agent Node Configuration (SSH-based) ──────────────────────────────────────
+# Agent IPs are injected from SSM at master boot (Terraform writes them).
+# The master reads all 3 agent IPs, sets them as OS env vars, JCasC picks them up.
+nodes:
+  - permanent:
+      name:        "build-agent"
+      description: "Node.js 20, sonar-scanner, kustomize — Stages 1, 2, 3, 7"
+      numExecutors: 2
+      remoteFS:    "/home/jenkins-agent/workspace"
+      labelString: "build-agent"
+      launcher:
+        ssh:
+          host:            "${BUILD_AGENT_HOST}"
+          port:            22
+          credentialsId:   "jenkins-ssh-agent-key"
+          launchTimeoutSeconds: 60
+          maxNumRetries:   3
+          retryWaitTime:   30
+          sshHostKeyVerificationStrategy:
+            manuallyTrustedKeyVerificationStrategy:
+              requireInitialManualTrust: false
 
-          # ---- Test Agent ----
-          - name:            test-agent
-            label:           test-agent
-            namespace:       cicd
-            nodeUsageMode:   EXCLUSIVE
-            idleMinutes:     0
-            containers:
-              - name:  jnlp
-                image: jenkins/inbound-agent:3206.vb_15dcf73f6a_9-1
-                alwaysPullImage: true
-                resourceRequestCpu:    200m
-                resourceRequestMemory: 256Mi
-              - name:  newman
-                image: postman/newman:6-alpine
-                command: cat
-                ttyEnabled: true
-                resourceRequestCpu:    200m
-                resourceRequestMemory: 256Mi
-              - name:  zap
-                image: ghcr.io/zaproxy/zaproxy:stable
-                command: cat
-                ttyEnabled: true
-                resourceRequestCpu:    500m
-                resourceRequestMemory: 512Mi
-              - name:  docker
-                image: docker:24-dind
-                privileged: true
-                resourceRequestCpu:    500m
-                resourceRequestMemory: 512Mi
+  - permanent:
+      name:        "security-agent"
+      description: "Docker, Kaniko, Trivy, Cosign — Stage 4"
+      numExecutors: 1
+      remoteFS:    "/home/jenkins-agent/workspace"
+      labelString: "security-agent"
+      launcher:
+        ssh:
+          host:            "${SECURITY_AGENT_HOST}"
+          port:            22
+          credentialsId:   "jenkins-ssh-agent-key"
+          launchTimeoutSeconds: 60
+          maxNumRetries:   3
+          retryWaitTime:   30
+          sshHostKeyVerificationStrategy:
+            manuallyTrustedKeyVerificationStrategy:
+              requireInitialManualTrust: false
 
-
-  jobs:
-    - script: |
-        multibranchPipelineJob('mern-auth-cicd') {
-          description('MERN Auth CI/CD — PRCICD-001 & PRCICD-002')
-          branchSources {
-            github {
-              id('mern-auth-source')
-              repoOwner('Data-Oceano-Infrastructure')
-              repository('mern-auth')
-              credentialsId('github-app-creds')
-              traits {
-                gitHubBranchDiscovery { strategyId(1) }  // PRs + main
-                gitHubPullRequestDiscovery { strategyId(1) }
-              }
-            }
-          }
-          factory {
-            workflowBranchProjectFactory {
-              scriptPath('Jenkinsfile')
-            }
-          }
-          triggers {
-            periodic(5)  // Poll every 5 min as fallback
-          }
-          orphanedItemStrategy {
-            discardOldItems { numToKeep(10) }
-          }
-        }
+  - permanent:
+      name:        "test-agent"
+      description: "Docker (isolated network), Newman, OWASP ZAP — Stages 5, 6"
+      numExecutors: 1
+      remoteFS:    "/home/jenkins-agent/workspace"
+      labelString: "test-agent"
+      launcher:
+        ssh:
+          host:            "${TEST_AGENT_HOST}"
+          port:            22
+          credentialsId:   "jenkins-ssh-agent-key"
+          launchTimeoutSeconds: 60
+          maxNumRetries:   3
+          retryWaitTime:   30
+          sshHostKeyVerificationStrategy:
+            manuallyTrustedKeyVerificationStrategy:
+              requireInitialManualTrust: false

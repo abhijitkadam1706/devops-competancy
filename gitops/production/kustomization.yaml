@@ -1,30 +1,44 @@
-# =====================================================================
-# Production Overlay — Blue/Green via ArgoCD
-# This overlay creates TWO deployments (blue + green) and a service
-# whose selector is patched to point at the active slot.
+# =============================================================================
+# GitOps Production Overlay — Kustomization
 #
+# This file is ONLY updated via Pull Request (never by Jenkins directly).
 # Promotion workflow:
-#   1. Jenkins updates 'newTag' in staging/kustomization.yaml (auto-deploy)
-#   2. After staging verification, a PR is opened: staging → production
-#   3. Release manager merges the PR
-#   4. ArgoCD syncs production to match the merged state
-# =====================================================================
+#   1. Merge PR that bumps newTag to match the staging-tested image tag
+#   2. Release manager clicks "Sync" in ArgoCD UI  (auto-sync is OFF)
+#   3. ArgoCD applies the new Deployment to the production namespace
+# =============================================================================
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 namespace: mern-auth-production
 
-resources:
-  - blue-deployment.yaml
-  - green-deployment.yaml
-  - prod-service.yaml
-  - namespace.yaml
+bases:
+  - ../../base
 
+# Production image — updated ONLY via PR merge (never by Jenkins directly)
+images:
+  - name:    mern-auth
+    newName: REGISTRY_PLACEHOLDER/mern-auth/prod
+    newTag:  latest
+
+# Production runs at higher replica count
+replicas:
+  - name:  mern-auth
+    count: 3
+
+# Production HPA — tighter CPU threshold
+patches:
+  - target:
+      kind: HorizontalPodAutoscaler
+      name: mern-auth
+    patch: |-
+      - op: replace
+        path: /spec/minReplicas
+        value: 3
+      - op: replace
+        path: /spec/maxReplicas
+        value: 10
+
+# Add production label to all resources
 commonLabels:
   environment: production
-
-# ── Image tag — updated via PR merge from staging ────────────────────
-images:
-  - name: mern-auth
-    newName: 203848753188.dkr.ecr.ap-southeast-1.amazonaws.com/mern-auth/prod
-    newTag: latest  # UPDATED VIA PR MERGE

@@ -1,0 +1,44 @@
+# =============================================================================
+# GitOps Base — HorizontalPodAutoscaler
+# Scales between 2 and 10 pods based on CPU utilisation
+# =============================================================================
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mern-auth
+  labels:
+    app.kubernetes.io/name:      mern-auth
+    app.kubernetes.io/component: api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind:       Deployment
+    name:       mern-auth
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type:               Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type:               Utilization
+          averageUtilization: 80
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type:          Pods
+          value:         2
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300   # 5-min cool-down before scale-in
+      policies:
+        - type:          Pods
+          value:         1
+          periodSeconds: 120

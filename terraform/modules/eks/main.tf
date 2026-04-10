@@ -12,7 +12,8 @@ resource "aws_eks_cluster" "main" {
   vpc_config {
     subnet_ids              = var.private_subnet_ids
     endpoint_private_access = true
-    endpoint_public_access  = false   # Zero-Trust: NO public K8s API
+    endpoint_public_access  = true    # Required: Terraform applies from local machine
+    public_access_cidrs     = var.eks_public_access_cidrs
     security_group_ids      = [aws_security_group.eks_cluster.id]
   }
 
@@ -224,3 +225,96 @@ resource "aws_iam_role_policy_attachment" "eks_ecr_policy" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
   role       = aws_iam_role.eks_node.name
 }
+
+# ── EKS Managed Addons ────────────────────────────────────────────────────────
+# Pinned versions — bump in variables.tf to upgrade.
+# PRESERVE_OR_DELETE: keeps user customisations on destroy without error.
+
+resource "aws_eks_addon" "vpc_cni" {
+  cluster_name             = aws_eks_cluster.main.name
+  addon_name               = "vpc-cni"
+  addon_version            = var.addon_vpc_cni_version
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "PRESERVE"
+
+  tags = merge(local.common_tags, { Name = "${var.cluster_name}-addon-vpc-cni" })
+
+  depends_on = [aws_eks_node_group.general]
+}
+
+resource "aws_eks_addon" "coredns" {
+  cluster_name             = aws_eks_cluster.main.name
+  addon_name               = "coredns"
+  addon_version            = var.addon_coredns_version
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "PRESERVE"
+
+  tags = merge(local.common_tags, { Name = "${var.cluster_name}-addon-coredns" })
+
+  depends_on = [aws_eks_node_group.general]
+}
+
+resource "aws_eks_addon" "kube_proxy" {
+  cluster_name             = aws_eks_cluster.main.name
+  addon_name               = "kube-proxy"
+  addon_version            = var.addon_kube_proxy_version
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "PRESERVE"
+
+  tags = merge(local.common_tags, { Name = "${var.cluster_name}-addon-kube-proxy" })
+
+  depends_on = [aws_eks_node_group.general]
+}
+
+resource "aws_eks_addon" "ebs_csi_driver" {
+  cluster_name             = aws_eks_cluster.main.name
+  addon_name               = "aws-ebs-csi-driver"
+  addon_version            = var.addon_ebs_csi_version
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "PRESERVE"
+
+  # EBS CSI driver needs IRSA permissions to manage EBS volumes
+  service_account_role_arn = aws_iam_role.ebs_csi.arn
+
+  tags = merge(local.common_tags, { Name = "${var.cluster_name}-addon-ebs-csi" })
+
+  depends_on = [aws_eks_node_group.general]
+}
+
+# ── IRSA Role for EBS CSI Driver ──────────────────────────────────────────────
+
+data "aws_iam_policy_document" "ebs_csi_assume_role" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.eks.arn]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:sub"
+      values   = ["system:serviceaccount:kube-system:ebs-csi-controller-sa"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "${replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")}:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "ebs_csi" {
+  name               = "${var.cluster_name}-ebs-csi-role"
+  assume_role_policy = data.aws_iam_policy_document.ebs_csi_assume_role.json
+  tags               = local.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi" {
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+  role       = aws_iam_role.ebs_csi.name
+}
+

@@ -67,11 +67,17 @@ resource "random_password" "docdb_master" {
   override_special = "!#$%&*()-_=+[]{}<>:?"
 }
 
+resource "random_string" "secret_suffix" {
+  length  = 4
+  special = false
+  upper   = false
+}
+
 resource "aws_secretsmanager_secret" "docdb_master" {
-  name                    = "${var.cluster_identifier}/docdb/master-password"
+  name                    = "${var.cluster_identifier}/docdb/master-password-${random_string.secret_suffix.result}"
   description             = "DocumentDB master password for ${var.cluster_identifier}"
   kms_key_id              = aws_kms_key.docdb.arn
-  recovery_window_in_days = 30
+  recovery_window_in_days = 30  # Restored to 30 days securely because random suffix prevents collisions
   tags                    = { Name = "${var.cluster_identifier}-docdb-secret" }
 }
 

@@ -1,20 +1,16 @@
 # =============================================================================
-# GitOps Base — Service
-# ClusterIP only — external access goes through ALB Ingress
+# GitOps Base — PodDisruptionBudget
+# Ensures at least 1 pod is always available during node drains / rolling updates
 # =============================================================================
-apiVersion: v1
-kind: Service
+apiVersion: policy/v1
+kind: PodDisruptionBudget
 metadata:
   name: mern-auth
   labels:
     app.kubernetes.io/name:      mern-auth
     app.kubernetes.io/component: api
 spec:
-  type:     ClusterIP
+  minAvailable: 1
   selector:
-    app.kubernetes.io/name: mern-auth
-  ports:
-    - name:       http
-      port:       80
-      targetPort: http
-      protocol:   TCP
+    matchLabels:
+      app.kubernetes.io/name: mern-auth

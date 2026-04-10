@@ -1,9 +1,25 @@
+# =============================================================================
+# GitOps Base — Kustomization
+# Lists all resources in the base layer.
+# Overlays (staging/, production/) extend this via patches.
+# =============================================================================
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
-
-commonLabels:
-  app.kubernetes.io/part-of: mern-auth
 
 resources:
   - deployment.yaml
   - service.yaml
+  - hpa.yaml
+  - pdb.yaml
+  - ingress.yaml
+
+# Common labels applied to ALL resources in this base
+commonLabels:
+  app.kubernetes.io/name:       mern-auth
+  app.kubernetes.io/managed-by: ArgoCD
+
+# Image placeholder — overridden by overlays
+images:
+  - name:    mern-auth
+    newName: placeholder
+    newTag:  placeholder

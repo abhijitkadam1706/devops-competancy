@@ -1,28 +1,51 @@
-# =====================================================================
-# Staging Overlay — ArgoCD syncs this to mern-auth-staging namespace
-# Jenkins updates the 'newTag' field below via kustomize edit set image
-# =====================================================================
+# =============================================================================
+# GitOps Staging Overlay — Kustomization
+#
+# Jenkins updates the `newTag` field in images[] via:
+#   kustomize edit set image mern-auth=<STAGE_REGISTRY>:<IMAGE_TAG>
+# ArgoCD auto-syncs staging within ~3 minutes of the git push.
+# =============================================================================
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 namespace: mern-auth-staging
 
 bases:
-  - ../base
+  - ../../base
 
+# Staging image — Jenkins CI updates newName+newTag on every successful build
+images:
+  - name:    mern-auth
+    newName: REGISTRY_PLACEHOLDER/mern-auth/stage
+    newTag:  latest
+
+# Staging-specific replica count (lower than production)
+replicas:
+  - name:  mern-auth
+    count: 2
+
+# Staging-specific resource patches
+patches:
+  - target:
+      kind:     Deployment
+      name:     mern-auth
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "100m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "300m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "128Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "256Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/env/1/value
+        value: "staging"
+
+# Add staging label to all resources
 commonLabels:
   environment: staging
-
-# ── Image tag — Jenkins CI updates this line automatically ───────────
-images:
-  - name: mern-auth
-    newName: 203848753188.dkr.ecr.ap-southeast-1.amazonaws.com/mern-auth/stage
-    newTag: latest  # UPDATED BY JENKINS CI PIPELINE
-
-# ── Staging-specific patches ─────────────────────────────────────────
-patchesStrategicMerge:
-  - staging-patch.yaml
-
-replicas:
-  - name: mern-auth
-    count: 2
