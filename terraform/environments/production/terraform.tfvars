@@ -37,12 +37,12 @@ jenkins_security_agent_instance_type = "t3.large"
 jenkins_test_agent_instance_type     = "t3.large"
 
 # ── Monitoring ────────────────────────────────────────────────────────────────
-alert_email              = "devops@example.com"
+alert_email              = "kadamabhijit1706@gmail.com"
 prometheus_chart_version = "61.3.2"
 
 # ── ArgoCD ────────────────────────────────────────────────────────────────────
 argocd_chart_version = "7.3.3"
-gitops_repo_url      = "https://github.com/abhijitkadam1706/DevOps-Competency-2.git"
+gitops_repo_url      = "https://github.com/abhijitkadam1706/devops-competancy.git"
 gitops_branch        = "main"
 
 # ── Domain ────────────────────────────────────────────────────────────────────
