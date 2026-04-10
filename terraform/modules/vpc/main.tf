@@ -20,13 +20,13 @@ resource "aws_vpc" "main" {
   enable_dns_hostnames = true
   enable_dns_support   = true
 
-  tags = { Name = "${var.cluster_name}-vpc" }
+  tags = { Name = "${var.cluster_name}-vpc", Environment = var.environment }
 }
 
 # ── Internet Gateway (PUBLIC SUBNETS ONLY) ───────────────────────────────────
 resource "aws_internet_gateway" "main" {
   vpc_id = aws_vpc.main.id
-  tags   = { Name = "${var.cluster_name}-igw" }
+  tags   = { Name = "${var.cluster_name}-igw", Environment = var.environment }
 }
 
 # ── Public Subnets ───────────────────────────────────────────────────────────
@@ -43,6 +43,7 @@ resource "aws_subnet" "public" {
     Name                                        = "${var.cluster_name}-public-${count.index + 1}"
     "kubernetes.io/role/elb"                    = "1"
     "kubernetes.io/cluster/${var.cluster_name}" = "shared"
+    Environment                                 = var.environment
   }
 }
 
@@ -57,6 +58,7 @@ resource "aws_subnet" "private" {
     Name                                        = "${var.cluster_name}-private-${count.index + 1}"
     "kubernetes.io/role/internal-elb"           = "1"
     "kubernetes.io/cluster/${var.cluster_name}" = "shared"
+    Environment                                 = var.environment
   }
 }
 
@@ -68,8 +70,9 @@ resource "aws_subnet" "database" {
   availability_zone = local.azs[count.index]
 
   tags = {
-    Name = "${var.cluster_name}-db-${count.index + 1}"
-    Tier = "database"
+    Name        = "${var.cluster_name}-db-${count.index + 1}"
+    Tier        = "database"
+    Environment = var.environment
   }
 }
 
@@ -77,7 +80,7 @@ resource "aws_subnet" "database" {
 resource "aws_eip" "nat" {
   count  = length(local.azs)
   domain = "vpc"
-  tags   = { Name = "${var.cluster_name}-nat-eip-${count.index + 1}" }
+  tags   = { Name = "${var.cluster_name}-nat-eip-${count.index + 1}", Environment = var.environment }
 }
 
 # ── NAT Gateways (One per AZ for HA) ─────────────────────────────────────────
@@ -86,7 +89,7 @@ resource "aws_nat_gateway" "main" {
   allocation_id = aws_eip.nat[count.index].id
   subnet_id     = aws_subnet.public[count.index].id
 
-  tags       = { Name = "${var.cluster_name}-nat-${count.index + 1}" }
+  tags       = { Name = "${var.cluster_name}-nat-${count.index + 1}", Environment = var.environment }
   depends_on = [aws_internet_gateway.main]
 }
 
@@ -97,7 +100,7 @@ resource "aws_route_table" "public" {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.main.id
   }
-  tags = { Name = "${var.cluster_name}-public-rt" }
+  tags = { Name = "${var.cluster_name}-public-rt", Environment = var.environment }
 }
 
 resource "aws_route_table" "private" {
@@ -107,7 +110,7 @@ resource "aws_route_table" "private" {
     cidr_block     = "0.0.0.0/0"
     nat_gateway_id = aws_nat_gateway.main[count.index].id
   }
-  tags = { Name = "${var.cluster_name}-private-rt-${count.index + 1}" }
+  tags = { Name = "${var.cluster_name}-private-rt-${count.index + 1}", Environment = var.environment }
 }
 
 resource "aws_route_table_association" "public" {
@@ -190,7 +193,7 @@ resource "aws_flow_log" "main" {
   log_destination = data.aws_cloudwatch_log_group.flow_log.arn
   traffic_type    = "ALL"
   vpc_id          = aws_vpc.main.id
-  tags            = { Name = "${var.cluster_name}-flow-logs" }
+  tags            = { Name = "${var.cluster_name}-flow-logs", Environment = var.environment }
 
   depends_on = [null_resource.ensure_flow_log_group]
 }

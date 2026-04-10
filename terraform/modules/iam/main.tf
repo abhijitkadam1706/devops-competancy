@@ -41,7 +41,7 @@ resource "aws_iam_role" "jenkins_master" {
   name               = "${var.cluster_name}-jenkins-master"
   description        = "Jenkins Master Controller - SSM access + read agent SSH key"
   assume_role_policy = local.ec2_assume_role_policy
-  tags               = { Name = "${var.cluster_name}-jenkins-master", Role = "jenkins-master" }
+  tags               = { Name = "${var.cluster_name}-jenkins-master", Role = "jenkins-master", Environment = var.environment }
 }
 
 resource "aws_iam_role_policy" "jenkins_master_ssm_key_read" {
@@ -67,7 +67,7 @@ resource "aws_iam_role_policy_attachment" "jenkins_master_ssm" {
 resource "aws_iam_instance_profile" "jenkins_master" {
   name = "${var.cluster_name}-jenkins-master-profile"
   role = aws_iam_role.jenkins_master.name
-  tags = { Name = "${var.cluster_name}-jenkins-master-profile" }
+  tags = { Name = "${var.cluster_name}-jenkins-master-profile", Environment = var.environment }
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -79,7 +79,7 @@ resource "aws_iam_role" "jenkins_build_agent" {
   name               = "${var.cluster_name}-jenkins-build-agent"
   description        = "Jenkins build-agent - Node.js build, lint, GitOps commit"
   assume_role_policy = local.ec2_assume_role_policy
-  tags               = { Name = "${var.cluster_name}-jenkins-build-agent", AgentLabel = "build-agent" }
+  tags               = { Name = "${var.cluster_name}-jenkins-build-agent", AgentLabel = "build-agent", Environment = var.environment }
 }
 
 resource "aws_iam_role_policy" "jenkins_build_agent_policy" {
@@ -105,7 +105,7 @@ resource "aws_iam_role_policy_attachment" "jenkins_build_agent_ssm" {
 resource "aws_iam_instance_profile" "jenkins_build_agent" {
   name = "${var.cluster_name}-jenkins-build-agent-profile"
   role = aws_iam_role.jenkins_build_agent.name
-  tags = { Name = "${var.cluster_name}-jenkins-build-agent-profile" }
+  tags = { Name = "${var.cluster_name}-jenkins-build-agent-profile", Environment = var.environment }
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -117,7 +117,7 @@ resource "aws_iam_role" "jenkins_security_agent" {
   name               = "${var.cluster_name}-jenkins-security-agent"
   description        = "Jenkins security-agent - Kaniko build + ECR push + Trivy scan"
   assume_role_policy = local.ec2_assume_role_policy
-  tags               = { Name = "${var.cluster_name}-jenkins-security-agent", AgentLabel = "security-agent" }
+  tags               = { Name = "${var.cluster_name}-jenkins-security-agent", AgentLabel = "security-agent", Environment = var.environment }
 }
 
 resource "aws_iam_role_policy" "jenkins_security_agent_ecr_push" {
@@ -168,7 +168,7 @@ resource "aws_iam_role_policy_attachment" "jenkins_security_agent_ssm" {
 resource "aws_iam_instance_profile" "jenkins_security_agent" {
   name = "${var.cluster_name}-jenkins-security-agent-profile"
   role = aws_iam_role.jenkins_security_agent.name
-  tags = { Name = "${var.cluster_name}-jenkins-security-agent-profile" }
+  tags = { Name = "${var.cluster_name}-jenkins-security-agent-profile", Environment = var.environment }
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -180,7 +180,7 @@ resource "aws_iam_role" "jenkins_test_agent" {
   name               = "${var.cluster_name}-jenkins-test-agent"
   description        = "Jenkins test-agent - Docker test networks, Newman API tests, ZAP DAST"
   assume_role_policy = local.ec2_assume_role_policy
-  tags               = { Name = "${var.cluster_name}-jenkins-test-agent", AgentLabel = "test-agent" }
+  tags               = { Name = "${var.cluster_name}-jenkins-test-agent", AgentLabel = "test-agent", Environment = var.environment }
 }
 
 resource "aws_iam_role_policy" "jenkins_test_agent_ecr_pull" {
@@ -220,7 +220,7 @@ resource "aws_iam_role_policy_attachment" "jenkins_test_agent_ssm" {
 resource "aws_iam_instance_profile" "jenkins_test_agent" {
   name = "${var.cluster_name}-jenkins-test-agent-profile"
   role = aws_iam_role.jenkins_test_agent.name
-  tags = { Name = "${var.cluster_name}-jenkins-test-agent-profile" }
+  tags = { Name = "${var.cluster_name}-jenkins-test-agent-profile", Environment = var.environment }
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -230,7 +230,7 @@ resource "aws_iam_role" "jenkins_ec2_agent" {
   name               = "${var.cluster_name}-jenkins-agent-ec2"
   description        = "Legacy single-node Jenkins agent (used in staging/dev)"
   assume_role_policy = local.ec2_assume_role_policy
-  tags               = { Name = "${var.cluster_name}-jenkins-agent-ec2" }
+  tags               = { Name = "${var.cluster_name}-jenkins-agent-ec2", Environment = var.environment }
 }
 
 resource "aws_iam_role_policy" "jenkins_ecr_push" {
@@ -276,7 +276,7 @@ resource "aws_iam_role_policy_attachment" "jenkins_ssm" {
 resource "aws_iam_instance_profile" "jenkins_ec2_agent" {
   name = "${var.cluster_name}-jenkins-agent-profile"
   role = aws_iam_role.jenkins_ec2_agent.name
-  tags = { Name = "${var.cluster_name}-jenkins-agent-profile" }
+  tags = { Name = "${var.cluster_name}-jenkins-agent-profile", Environment = var.environment }
 }
 
 # =============================================================================

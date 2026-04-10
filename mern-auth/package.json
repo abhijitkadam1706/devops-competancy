@@ -1,15 +1,17 @@
 {
   "name": "mern-auth",
   "version": "1.0.0",
-  "description": "",
+  "description": "MERN authentication service — production-grade, AWS DevOps Competency demo",
   "type": "module",
-  "main": "index.js",
+  "main": "api/index.js",
   "scripts": {
     "dev": "nodemon api/index.js",
     "start": "node api/index.js",
-    "build": "npm install && npm install --prefix client && npm run build --prefix client"
+    "build": "npm install && npm install --prefix client && npm run build --prefix client",
+    "test": "npx vitest run --passWithNoTests --root client",
+    "test:coverage": "npx vitest run --coverage --passWithNoTests --root client"
   },
-  "keywords": [],
+  "keywords": ["mern", "auth", "nodejs", "express", "mongodb"],
   "author": "",
   "license": "ISC",
   "dependencies": {
@@ -20,7 +22,9 @@
     "express-prom-bundle": "^7.0.0",
     "jsonwebtoken": "^9.0.1",
     "mongoose": "^7.4.2",
-    "nodemon": "^3.0.1",
     "prom-client": "^15.1.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
   }
 }

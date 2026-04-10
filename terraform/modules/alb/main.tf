@@ -40,7 +40,7 @@ resource "aws_security_group" "alb" {
     description = "Forward to app port on EKS nodes only"
   }
 
-  tags = { Name = "${var.cluster_name}-alb-sg" }
+  tags = { Name = "${var.cluster_name}-alb-sg", Environment = var.environment }
 }
 
 # ── IRSA: IAM Role for AWS Load Balancer Controller ──────────────────────────
@@ -68,7 +68,7 @@ data "aws_iam_policy_document" "alb_controller_assume" {
 resource "aws_iam_role" "alb_controller" {
   name               = "${var.cluster_name}-alb-controller"
   assume_role_policy = data.aws_iam_policy_document.alb_controller_assume.json
-  tags               = { Name = "${var.cluster_name}-alb-controller" }
+  tags               = { Name = "${var.cluster_name}-alb-controller", Environment = var.environment }
 }
 
 # Minimal IAM policy for the ALB Controller (least privilege)
@@ -137,7 +137,7 @@ resource "aws_acm_certificate" "main" {
     create_before_destroy = true
   }
 
-  tags = { Name = "${var.cluster_name}-cert" }
+  tags = { Name = "${var.cluster_name}-cert", Environment = var.environment }
 }
 
 # ── AWS WAF (MANDATORY — always provisioned for security) ─────────────────────
@@ -197,5 +197,5 @@ resource "aws_wafv2_web_acl" "main" {
     sampled_requests_enabled   = true
   }
 
-  tags = { Name = "${var.cluster_name}-waf" }
+  tags = { Name = "${var.cluster_name}-waf", Environment = var.environment }
 }

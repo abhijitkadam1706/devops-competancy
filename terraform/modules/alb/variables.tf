@@ -13,10 +13,7 @@ variable "vpc_cidr" {
   type        = string
 }
 
-variable "public_subnet_ids" {
-  description = "List of public subnet IDs for the ALB"
-  type        = list(string)
-}
+
 
 variable "oidc_provider_arn" {
   description = "ARN of the EKS cluster OIDC provider for IRSA"

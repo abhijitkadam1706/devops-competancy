@@ -8,7 +8,7 @@ resource "aws_kms_key" "docdb" {
   description             = "KMS key for DocumentDB ${var.cluster_identifier}"
   deletion_window_in_days = 30
   enable_key_rotation     = true
-  tags                    = { Name = "${var.cluster_identifier}-docdb-key" }
+  tags                    = { Name = "${var.cluster_identifier}-docdb-key", Environment = var.environment }
 }
 
 resource "aws_kms_alias" "docdb" {
@@ -20,7 +20,7 @@ resource "aws_kms_alias" "docdb" {
 resource "aws_docdb_subnet_group" "main" {
   name       = "${var.cluster_identifier}-subnet-group"
   subnet_ids = var.database_subnet_ids
-  tags       = { Name = "${var.cluster_identifier}-docdb-subnet-group" }
+  tags       = { Name = "${var.cluster_identifier}-docdb-subnet-group", Environment = var.environment }
 }
 
 # ── Security Group — Only allows access from EKS nodes, NO internet ──────────
@@ -38,7 +38,7 @@ resource "aws_security_group" "docdb" {
   }
 
   # Zero-Trust: NO egress from database tier
-  tags = { Name = "${var.cluster_identifier}-docdb-sg" }
+  tags = { Name = "${var.cluster_identifier}-docdb-sg", Environment = var.environment }
 }
 
 # ── Cluster Parameter Group — Enforce TLS ────────────────────────────────────
@@ -57,7 +57,7 @@ resource "aws_docdb_cluster_parameter_group" "main" {
     value = "enabled"  # Audit all operations — required for SOC2
   }
 
-  tags = { Name = "${var.cluster_identifier}-params" }
+  tags = { Name = "${var.cluster_identifier}-params", Environment = var.environment }
 }
 
 # ── Master Password from AWS Secrets Manager ──────────────────────────────────
@@ -78,7 +78,7 @@ resource "aws_secretsmanager_secret" "docdb_master" {
   description             = "DocumentDB master password for ${var.cluster_identifier}"
   kms_key_id              = aws_kms_key.docdb.arn
   recovery_window_in_days = 30  # Restored to 30 days securely because random suffix prevents collisions
-  tags                    = { Name = "${var.cluster_identifier}-docdb-secret" }
+  tags                    = { Name = "${var.cluster_identifier}-docdb-secret", Environment = var.environment }
 }
 
 resource "aws_secretsmanager_secret_version" "docdb_master" {
@@ -119,7 +119,7 @@ resource "aws_docdb_cluster" "main" {
   # Audit logging to CloudWatch
   enabled_cloudwatch_logs_exports = ["audit", "profiler"]
 
-  tags = { Name = var.cluster_identifier }
+  tags = { Name = var.cluster_identifier, Environment = var.environment }
 }
 
 # ── DocumentDB Instances (Multi-AZ) ──────────────────────────────────────────
@@ -130,5 +130,5 @@ resource "aws_docdb_cluster_instance" "main" {
   instance_class     = var.instance_class
 
   auto_minor_version_upgrade = true
-  tags                       = { Name = "${var.cluster_identifier}-instance-${count.index + 1}" }
+  tags                       = { Name = "${var.cluster_identifier}-instance-${count.index + 1}", Environment = var.environment }
 }

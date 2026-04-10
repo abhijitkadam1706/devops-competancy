@@ -172,7 +172,6 @@ module "alb" {
   cluster_name      = local.cluster_name
   vpc_id            = module.vpc.vpc_id
   vpc_cidr          = module.vpc.vpc_cidr_block
-  public_subnet_ids = module.vpc.public_subnet_ids
   oidc_provider_arn = module.eks.oidc_provider_arn
   oidc_issuer_url   = module.eks.cluster_oidc_issuer_url
   domain_name       = var.domain_name
