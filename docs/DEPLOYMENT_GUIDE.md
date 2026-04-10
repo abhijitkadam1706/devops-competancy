@@ -160,21 +160,59 @@ You should see these in the list:
 
 ## 3. Deploy the Infrastructure with Terraform
 
+> **Why not just `terraform apply`?** On a **fresh deployment**, a single `terraform apply` will
+> fail because the Kubernetes/Helm tools try to connect to the EKS cluster — which doesn't exist
+> yet. The deploy script below handles this automatically by creating the cluster first, then
+> deploying the Kubernetes apps (ArgoCD, Prometheus, Grafana) in a second pass.
+
+### Option A: Automated (Recommended)
+
 ```powershell
 # Move into the production directory
 cd terraform/environments/production
 
-# Step 1: Download all required Terraform providers and modules
-terraform init
-
-# Step 2: Preview what will be created (nothing is built yet)
-terraform plan -out=tfplan
-
-# Step 3: Build everything on AWS (this takes 15–25 minutes)
-terraform apply tfplan
+# Run the automated deploy script — handles everything
+.\deploy.ps1
 ```
 
-> **Important:** After `terraform apply` finishes, it will print output values. Copy these — you
+This script does three things automatically:
+1. **Phase 1** — Creates VPC, EKS, IAM, Jenkins, DocumentDB, ECR (~15–20 min)
+2. **Phase 2** — Updates your kubeconfig to connect to the new EKS cluster
+3. **Phase 3** — Deploys ArgoCD, Prometheus, Grafana, WAF, StorageClass (~10–15 min)
+
+### Option B: Manual (Two Commands)
+
+If you prefer to run Terraform manually, use two separate apply commands:
+
+```powershell
+cd terraform/environments/production
+
+# Step 1: Init
+terraform init
+
+# Step 2: Create core infra FIRST (VPC, EKS, Jenkins, etc.)
+terraform apply -auto-approve `
+  -target=module.vpc `
+  -target=module.eks `
+  -target=module.iam `
+  -target=module.jenkins `
+  -target=module.documentdb `
+  -target=null_resource.update_kubeconfig `
+  -target=aws_ecr_repository.stage `
+  -target=aws_ecr_repository.prod `
+  -target=aws_ecr_repository.kaniko_cache `
+  -target=aws_ssm_parameter.ecr_registry `
+  -target=aws_ssm_parameter.ecr_stage_repo `
+  -target=aws_ssm_parameter.ecr_prod_repo
+
+# Step 3: Update kubeconfig to connect to the new EKS cluster
+aws eks update-kubeconfig --name mern-auth-prod --region ap-southeast-1
+
+# Step 4: Deploy EVERYTHING (now that EKS exists, all resources will work)
+terraform apply -auto-approve
+```
+
+> **Important:** After deployment finishes, it will print output values. Copy these — you
 > will need the Jenkins IP and agent private IPs in the next step.
 
 ### What Gets Created on AWS
