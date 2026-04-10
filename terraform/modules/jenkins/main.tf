@@ -88,7 +88,7 @@ resource "aws_ssm_parameter" "jenkins_admin_password" {
 # Follows AWS Well-Architected SEC-005: restrict ingress to required ports only.
 resource "aws_security_group" "jenkins_master_sg" {
   name        = "${var.cluster_name}-jenkins-master-sg"
-  description = "Jenkins Master — allow UI (8080) and JNLP agent port (50000)"
+  description = "Jenkins Master - allow UI (8080) and JNLP agent port (50000)"
   vpc_id      = var.vpc_id
 
   # Jenkins Web UI — restrict to office/VPN CIDR in production
@@ -137,7 +137,7 @@ resource "aws_security_group" "jenkins_master_sg" {
 # Agents sit in private subnets. Inbound SSH from Master only.
 resource "aws_security_group" "jenkins_agent_sg" {
   name        = "${var.cluster_name}-jenkins-agent-sg"
-  description = "Jenkins Agent nodes — SSH from master only"
+  description = "Jenkins Agent nodes - SSH from master only"
   vpc_id      = var.vpc_id
 
   ingress {
