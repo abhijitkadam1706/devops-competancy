@@ -43,7 +43,7 @@ prometheus_chart_version = "61.3.2"
 # ── ArgoCD ────────────────────────────────────────────────────────────────────
 argocd_chart_version = "7.3.3"
 gitops_repo_url      = "https://github.com/abhijitkadam1706/devops-competancy.git"
-gitops_branch        = "main"
+gitops_branch        = "master"
 
 # ── Domain ────────────────────────────────────────────────────────────────────
 # Empty = use raw ALB DNS (as confirmed). Set a Route53 domain name to enable ACM + HTTPS.

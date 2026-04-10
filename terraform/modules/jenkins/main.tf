@@ -217,10 +217,26 @@ resource "aws_instance" "jenkins_master" {
     # ── [4/9] Install Required Plugins BEFORE First Start ─────────────────
     echo "[4/9] Installing Jenkins plugins (2-3 min)..."
     export JENKINS_HOME=/var/lib/jenkins
-    /usr/bin/jenkins-plugin-cli \
-      --plugins "configuration-as-code role-strategy ssh-agents git workflow-aggregator sonar plain-credentials ssh-credentials credentials" \
-      && echo "  Plugins OK." \
-      || echo "  WARNING: Some plugins failed - Jenkins will retry on startup."
+    # Locate jenkins-plugin-cli (path differs by Jenkins version)
+    PLUGIN_CLI=$(find /usr /opt -name "jenkins-plugin-cli" 2>/dev/null | head -1)
+    if [ -z "$PLUGIN_CLI" ]; then
+      # Fallback: use jenkins-plugin-manager jar bundled with Jenkins
+      PLUGIN_CLI_JAR=$(find /usr/share/jenkins -name "jenkins-plugin-manager*.jar" 2>/dev/null | head -1)
+      if [ -n "$PLUGIN_CLI_JAR" ]; then
+        java -jar "$PLUGIN_CLI_JAR" \
+          --war /usr/share/jenkins/jenkins.war \
+          --plugins "configuration-as-code role-strategy ssh-agents git workflow-aggregator sonar plain-credentials ssh-credentials credentials" \
+          && echo "  Plugins OK (jar)." \
+          || echo "  WARNING: Plugin install via jar failed."
+      else
+        echo "  WARNING: jenkins-plugin-cli not found. Jenkins will install plugins on first start."
+      fi
+    else
+      "$PLUGIN_CLI" \
+        --plugins "configuration-as-code role-strategy ssh-agents git workflow-aggregator sonar plain-credentials ssh-credentials credentials" \
+        && echo "  Plugins OK." \
+        || echo "  WARNING: Some plugins failed - Jenkins will retry on startup."
+    fi
     chown -R jenkins:jenkins /var/lib/jenkins/plugins 2>/dev/null || true
 
     # ── [5/9] Fetch Secrets from AWS SSM ──────────────────────────────────
@@ -292,7 +308,7 @@ resource "aws_instance" "jenkins_master" {
     # This keeps user_data under the AWS 16 KB limit and means JCasC can be
     # updated in source control without rebuilding the EC2 instance.
     echo "[8/9] Downloading JCasC (jenkins.yaml) from GitHub..."
-    CASC_URL="https://raw.githubusercontent.com/abhijitkadam1706/devops-competancy/main/jenkins/jenkins-casc-config.yaml"
+    CASC_URL="https://raw.githubusercontent.com/abhijitkadam1706/devops-competancy/master/jenkins/jenkins-casc-config.yaml"
     if [ -n "$GH_PAT" ] && [ "$GH_PAT" != "PLACEHOLDER_NOT_SET" ] && [ "$GH_PAT" != "REPLACE_WITH_GITHUB_PAT" ]; then
       curl -fsSL -H "Authorization: token $GH_PAT" "$CASC_URL" \
         -o /var/lib/jenkins/jenkins.yaml \
