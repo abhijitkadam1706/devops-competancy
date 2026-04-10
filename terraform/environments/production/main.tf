@@ -216,11 +216,6 @@ module "jenkins" {
   security_agent_instance_profile = module.iam.jenkins_security_agent_profile
   test_agent_instance_profile     = module.iam.jenkins_test_agent_profile
 
-  # Pass computed ECR values so Jenkins user_data has no hardcoded URLs
-  ecr_registry   = local.ecr_registry
-  ecr_stage_repo = local.ecr_stage_repo
-  ecr_prod_repo  = local.ecr_prod_repo
-
   depends_on = [module.iam, module.vpc]
 }
 

@@ -109,14 +109,8 @@ resource "aws_security_group" "jenkins_master_sg" {
     cidr_blocks = ["10.0.0.0/8"]
   }
 
-  # JNLP — agents connect inbound on this port
-  ingress {
-    description = "Jenkins JNLP Agent Port"
-    from_port   = 50000
-    to_port     = 50000
-    protocol    = "tcp"
-    cidr_blocks = ["10.0.0.0/8"]
-  }
+  # NOTE: JNLP port 50000 is NOT opened — agents connect via SSH (port 22).
+  # If you switch to JNLP-based agents in the future, add a rule here.
 
   # Outbound: plugin downloads, GitHub, ECR, SSM endpoints
   egress {
@@ -193,11 +187,20 @@ resource "aws_eip" "jenkins_master_eip" {
 # See docs/DEPLOYMENT_GUIDE.md for step-by-step instructions.
 # =============================================================================
 resource "aws_instance" "jenkins_master" {
-  ami                    = local.ami
-  instance_type          = var.master_instance_type
-  subnet_id              = var.public_subnet_id
-  vpc_security_group_ids = [aws_security_group.jenkins_master_sg.id]
-  iam_instance_profile   = var.master_instance_profile
+  ami                         = local.ami
+  instance_type               = var.master_instance_type
+  subnet_id                   = var.public_subnet_id
+  vpc_security_group_ids      = [aws_security_group.jenkins_master_sg.id]
+  iam_instance_profile        = var.master_instance_profile
+  associate_public_ip_address = true
+  monitoring                  = true
+
+  # SEC-003: Enforce IMDSv2 — prevents SSRF-based credential theft
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
 
   root_block_device {
     volume_size           = 30
@@ -291,9 +294,9 @@ resource "aws_instance" "jenkins_master" {
     fi
 
     # ── [5/5] Install Kustomize & Start Jenkins ──────────────────────────
-    echo "[5/5] Installing kustomize, starting Jenkins..."
-    curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
-    mv kustomize /usr/local/bin/
+    echo "[5/5] Installing kustomize ${var.kustomize_version}, starting Jenkins..."
+    curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${var.kustomize_version}/kustomize_${var.kustomize_version}_linux_amd64.tar.gz" \
+      | tar xz -C /usr/local/bin
     chmod +x /usr/local/bin/kustomize
 
     chown -R jenkins:jenkins /var/lib/jenkins
@@ -312,9 +315,6 @@ resource "aws_instance" "jenkins_master" {
   depends_on = [
     aws_ssm_parameter.jenkins_admin_password,
     aws_ssm_parameter.jenkins_ssh_private_key,
-    aws_instance.build_agent,
-    aws_instance.security_agent,
-    aws_instance.test_agent,
   ]
 
   tags = {
@@ -337,6 +337,13 @@ resource "aws_instance" "build_agent" {
   subnet_id              = var.private_subnet_id
   vpc_security_group_ids = [aws_security_group.jenkins_agent_sg.id]
   iam_instance_profile   = var.build_agent_instance_profile
+  monitoring             = true
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
 
   root_block_device {
     volume_size           = 30
@@ -406,6 +413,13 @@ resource "aws_instance" "security_agent" {
   subnet_id              = var.private_subnet_id
   vpc_security_group_ids = [aws_security_group.jenkins_agent_sg.id]
   iam_instance_profile   = var.security_agent_instance_profile
+  monitoring             = true
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
 
   root_block_device {
     volume_size           = 50
@@ -474,6 +488,13 @@ resource "aws_instance" "test_agent" {
   subnet_id              = var.private_subnet_id
   vpc_security_group_ids = [aws_security_group.jenkins_agent_sg.id]
   iam_instance_profile   = var.test_agent_instance_profile
+  monitoring             = true
+
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 2
+  }
 
   root_block_device {
     volume_size           = 40

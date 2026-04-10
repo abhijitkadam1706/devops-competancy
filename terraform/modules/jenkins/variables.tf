@@ -86,22 +86,9 @@ variable "test_agent_instance_profile" {
   type        = string
 }
 
-# ── ECR (passed from root, computed from data sources — NOT hardcoded) ─────────
-
-variable "ecr_registry" {
-  description = "ECR registry base URL (account.dkr.ecr.region.amazonaws.com)"
-  type        = string
-}
-
-variable "ecr_stage_repo" {
-  description = "Full URI of the staging ECR repository"
-  type        = string
-}
-
-variable "ecr_prod_repo" {
-  description = "Full URI of the production ECR repository"
-  type        = string
-}
+# NOTE: ECR URLs are stored in SSM by the root module.
+# Jenkins reads them via Global Environment Variables configured in the UI.
+# No ECR variables needed at the module level.
 
 # ── Tool Versions (pinned — bump in tfvars to upgrade) ────────────────────────
 
