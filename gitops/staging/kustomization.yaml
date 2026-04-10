@@ -10,7 +10,7 @@ kind: Kustomization
 
 namespace: mern-auth-staging
 
-bases:
+resources:
   - ../../base
 
 # Staging image — Jenkins CI updates newName+newTag on every successful build

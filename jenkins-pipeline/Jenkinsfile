@@ -8,7 +8,7 @@
 //
 // ZERO HARDCODED VALUES:
 //   All ECR URLs, regions, SonarQube config flow from Jenkins Global
-//   Environment Variables set by JCasC (jenkins-casc-config.yaml).
+//   Environment Variables configured via the Jenkins UI.
 //   All secrets (JWT, Mongo, Cosign key, GitOps PAT) from Jenkins
 //   Credential Store (backed by AWS SSM Parameter Store).
 //
@@ -32,9 +32,9 @@ pipeline {
     agent none
 
     environment {
-        // ── Injected by Jenkins JCasC (jenkins-casc-config.yaml) ─────────────
-        // These are set as Global Environment Variables from SSM values written
-        // by Terraform. Nothing here is hardcoded.
+        // ── Injected by Jenkins Global Environment Variables (configured via UI)
+        // These are set as Global Environment Variables in Jenkins > Configure System.
+        // Values match SSM params written by Terraform. Nothing here is hardcoded.
         AWS_REGION      = "${AWS_REGION}"
         ECR_REGISTRY    = "${ECR_REGISTRY}"
         STAGE_REGISTRY  = "${STAGE_REGISTRY}"

@@ -12,7 +12,7 @@ kind: Kustomization
 
 namespace: mern-auth-production
 
-bases:
+resources:
   - ../../base
 
 # Production image — updated ONLY via PR merge (never by Jenkins directly)

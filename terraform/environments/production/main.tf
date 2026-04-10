@@ -319,8 +319,8 @@ resource "aws_ecr_lifecycle_policy" "kaniko_cache" {
   })
 }
 
-# ── SSM: Store computed ECR URLs for Jenkins JCasC to read ────────────────────
-# Jenkins reads these at startup via JCasC — no hardcoded URLs in Jenkinsfile
+# ── SSM: Store computed ECR URLs for Jenkins to read ──────────────────────────
+# Jenkins reads these via Global Environment Variables (configured in UI)
 
 resource "aws_ssm_parameter" "ecr_registry" {
   name        = "${local.ssm_prefix}/jenkins/ecr-registry"
