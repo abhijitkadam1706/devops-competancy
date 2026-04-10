@@ -215,67 +215,61 @@ resource "aws_instance" "jenkins_master" {
   }
 
   user_data = base64encode(<<-EOT
-    #!/bin/bash
-    set -euo pipefail
-    exec > /var/log/jenkins-master-init.log 2>&1
-    echo "=== Jenkins Master Bootstrap — $(date) ==="
+#!/bin/bash
+set -euo pipefail
+exec > /var/log/jenkins-master-init.log 2>&1
+echo "=== Jenkins Master Bootstrap — $(date) ==="
 
-    # ── [1/6] Java 17 ────────────────────────────────────────────────────
-    echo "[1/6] Installing Java 17..."
-    dnf install java-17-amazon-corretto git wget -y
+# ── [1/6] Java 17 ──
+echo "[1/6] Installing Java 17..."
+dnf install java-17-amazon-corretto git wget -y
 
-    # ── [2/6] Jenkins LTS ────────────────────────────────────────────────
-    echo "[2/6] Installing Jenkins LTS..."
-    wget -O /etc/yum.repos.d/jenkins.repo \
-      https://pkg.jenkins.io/redhat-stable/jenkins.repo
-    rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
-    dnf install jenkins -y
+# ── [2/6] Jenkins LTS ──
+echo "[2/6] Installing Jenkins LTS..."
+wget -O /etc/yum.repos.d/jenkins.repo \
+  https://pkg.jenkins.io/redhat-stable/jenkins.repo
+rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
+dnf install jenkins -y
 
-    # ── [3/6] Skip Setup Wizard ──────────────────────────────────────────
-    # Plugins are installed manually via Jenkins UI (Manage > Plugins).
-    # This only disables the first-run wizard so Jenkins starts clean.
-    echo "[3/6] Disabling setup wizard..."
-    mkdir -p /var/lib/jenkins
-    echo "2.0" > /var/lib/jenkins/jenkins.install.InstallUtil.lastExecVersion
-    echo "2.0" > /var/lib/jenkins/jenkins.install.UpgradeWizard.state
+# ── [3/6] Skip Setup Wizard ──
+echo "[3/6] Disabling setup wizard..."
+mkdir -p /var/lib/jenkins
+echo "2.0" > /var/lib/jenkins/jenkins.install.InstallUtil.lastExecVersion
+echo "2.0" > /var/lib/jenkins/jenkins.install.UpgradeWizard.state
 
-    # ── [4/6] SSH Key + Kustomize ────────────────────────────────────────
-    echo "[4/6] Fetching SSH key from SSM, installing kustomize..."
-    export AWS_DEFAULT_REGION="${var.aws_region}"
+# ── [4/6] SSH Key + Kustomize ──
+echo "[4/6] Fetching SSH key from SSM, installing kustomize..."
+export AWS_DEFAULT_REGION="${var.aws_region}"
 
-    JENKINS_SSH_KEY=$(aws ssm get-parameter \
-      --name "/${var.cluster_name}/jenkins/agent-ssh-private-key" \
-      --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo "")
-    if [ -n "$JENKINS_SSH_KEY" ]; then
-      mkdir -p /var/lib/jenkins/.ssh
-      printf '%s' "$JENKINS_SSH_KEY" > /var/lib/jenkins/.ssh/agent_key
-      chmod 600 /var/lib/jenkins/.ssh/agent_key
-    fi
+JENKINS_SSH_KEY=$(aws ssm get-parameter \
+  --name "/${var.cluster_name}/jenkins/agent-ssh-private-key" \
+  --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo "")
+if [ -n "$JENKINS_SSH_KEY" ]; then
+  mkdir -p /var/lib/jenkins/.ssh
+  printf '%s' "$JENKINS_SSH_KEY" > /var/lib/jenkins/.ssh/agent_key
+  chmod 600 /var/lib/jenkins/.ssh/agent_key
+fi
 
-    curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${var.kustomize_version}/kustomize_${var.kustomize_version}_linux_amd64.tar.gz" \
-      | tar xz -C /usr/local/bin
-    chmod +x /usr/local/bin/kustomize
+curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${var.kustomize_version}/kustomize_${var.kustomize_version}_linux_amd64.tar.gz" \
+  | tar xz -C /usr/local/bin
+chmod +x /usr/local/bin/kustomize
 
-    # ── [5/6] Groovy Init Scripts — Auto-fix 3 security warnings ─────────
-    # These run ONCE on first Jenkins start, then self-delete.
-    # Uses ONLY built-in Jenkins classes (no plugins required).
-    echo "[5/6] Writing Groovy init scripts..."
-    INIT_DIR="/var/lib/jenkins/init.groovy.d"
-    mkdir -p "$INIT_DIR"
+# ── [5/6] Groovy Init Scripts — Security ──
+echo "[5/6] Writing Groovy init scripts..."
+INIT_DIR="/var/lib/jenkins/init.groovy.d"
+mkdir -p "$INIT_DIR"
 
-    ADMIN_PASS=$(aws ssm get-parameter \
-      --name "/${var.cluster_name}/jenkins/admin-password" \
-      --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo "admin")
-    mkdir -p /var/lib/jenkins/secrets
-    printf '%s' "$ADMIN_PASS" > /var/lib/jenkins/secrets/.admin_pass
-    chmod 600 /var/lib/jenkins/secrets/.admin_pass
+ADMIN_PASS=$(aws ssm get-parameter \
+  --name "/${var.cluster_name}/jenkins/admin-password" \
+  --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo "admin")
+mkdir -p /var/lib/jenkins/secrets
+printf '%s' "$ADMIN_PASS" > /var/lib/jenkins/secrets/.admin_pass
+chmod 600 /var/lib/jenkins/secrets/.admin_pass
 
-    # Script 1: Create admin user + enable security (built-in classes only)
-    # Fixes: "Jenkins is currently unsecured"
-    cat > "$INIT_DIR/01-security.groovy" << 'GROOVYEOF'
+# Groovy 1: Create admin user + enable security (built-in classes only)
+cat > "$INIT_DIR/01-security.groovy" << 'GROOVYEOF'
 import jenkins.model.*
 import hudson.security.*
-
 def j = Jenkins.get()
 if (j.getSecurityRealm() instanceof HudsonPrivateSecurityRealm) {
   println "[init] Security already configured"
@@ -290,9 +284,8 @@ j.save()
 println "[init] Done: admin user created, login required"
 GROOVYEOF
 
-    # Script 2: Set Jenkins URL from EC2 metadata (IMDSv2)
-    # Fixes: "Jenkins URL is empty"
-    cat > "$INIT_DIR/02-url.groovy" << 'GROOVYEOF'
+# Groovy 2: Set Jenkins URL from EC2 metadata (IMDSv2)
+cat > "$INIT_DIR/02-url.groovy" << 'GROOVYEOF'
 import jenkins.model.*
 def j = Jenkins.get()
 def c = j.getDescriptorByType(JenkinsLocationConfiguration.class)
@@ -301,35 +294,33 @@ def ip = ["curl","-s","http://169.254.169.254/latest/meta-data/public-ipv4","-H"
 if (ip ==~ /\d+\.\d+\.\d+\.\d+/) { c.setUrl("http://$ip:8080/"); println "[init] URL=$ip" }
 GROOVYEOF
 
-    # Script 3: Disable built-in node executors
-    # Fixes: "Building on the built-in node can be a security issue"
-    cat > "$INIT_DIR/03-executors.groovy" << 'GROOVYEOF'
+# Groovy 3: Disable built-in node executors
+cat > "$INIT_DIR/03-executors.groovy" << 'GROOVYEOF'
 import jenkins.model.*
 def j = Jenkins.get()
 if (j.getNumExecutors() != 0) { j.setNumExecutors(0); j.setMode(hudson.model.Node.Mode.EXCLUSIVE); j.save(); println "[init] Executors=0" }
 GROOVYEOF
 
-    # Script 4: Self-cleanup (delete all init scripts + password file)
-    cat > "$INIT_DIR/99-cleanup.groovy" << 'GROOVYEOF'
+# Groovy 4: Self-cleanup
+cat > "$INIT_DIR/99-cleanup.groovy" << 'GROOVYEOF'
 def d = new File("/var/lib/jenkins/init.groovy.d")
 new File("/var/lib/jenkins/secrets/.admin_pass").delete()
 d.listFiles()?.each { it.delete() }
 println "[init] Cleanup done"
 GROOVYEOF
 
-    # ── [6/6] Start Jenkins ──────────────────────────────────────────────
-    echo "[6/6] Starting Jenkins..."
-    chown -R jenkins:jenkins /var/lib/jenkins
-    systemctl enable jenkins
-    systemctl start jenkins
+# ── [6/6] Start Jenkins ──
+echo "[6/6] Starting Jenkins..."
+chown -R jenkins:jenkins /var/lib/jenkins
+systemctl enable jenkins
+systemctl start jenkins
 
-    # Use IMDSv2 for public IP
-    TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" || echo "")
-    PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4 || echo "unknown")
-    echo "=== DONE — http://$PUBLIC_IP:8080 | user: admin ==="
-    echo "=== Password: aws ssm get-parameter --name /${var.cluster_name}/jenkins/admin-password --with-decryption --query Parameter.Value --output text --region ${var.aws_region} ==="
-    echo "=== NEXT: Install plugins via Manage Jenkins > Plugins ==="
-  EOT
+# Use IMDSv2 for public IP
+TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" || echo "")
+PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4 || echo "unknown")
+echo "=== DONE — http://$PUBLIC_IP:8080 | user: admin ==="
+echo "=== NEXT: Install plugins via Manage Jenkins > Plugins ==="
+EOT
   )
 
   # NOTE on plugins: All plugins (Pipeline, Git, SSH Agents, SonarQube, etc.)
