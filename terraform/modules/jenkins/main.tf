@@ -216,31 +216,33 @@ resource "aws_instance" "jenkins_master" {
 
   user_data = base64encode(<<-EOT
 #!/bin/bash
+# ============================================================================
+# Jenkins Master Bootstrap Script
+# Java 21 LTS | Full Setup Wizard | No Auto-Admin | No Wizard Bypass
+# ============================================================================
 set -euo pipefail
 exec > /var/log/jenkins-master-init.log 2>&1
 echo "=== Jenkins Master Bootstrap — $(date) ==="
 
-# ── [1/6] Java 17 ──
-echo "[1/6] Installing Java 17..."
-dnf install java-17-amazon-corretto git wget -y
+# ── [1/4] Java 21 (LTS) ─────────────────────────────────────────────────────
+# Java 17 EOL: March 2026. Java 21 is current Jenkins LTS requirement.
+echo "[1/4] Installing Java 21 (Amazon Corretto)..."
+dnf install java-21-amazon-corretto git wget -y
+echo "[1/4] Java 21 installed: $(java -version 2>&1 | head -1)"
 
-# ── [2/6] Jenkins LTS ──
-echo "[2/6] Installing Jenkins LTS..."
+# ── [2/4] Jenkins LTS ───────────────────────────────────────────────────────
+echo "[2/4] Installing Jenkins LTS..."
 wget -O /etc/yum.repos.d/jenkins.repo \
   https://pkg.jenkins.io/redhat-stable/jenkins.repo
 rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io-2023.key
 dnf install jenkins -y
+echo "[2/4] Jenkins installed."
 
-# ── [3/6] Skip Setup Wizard ──
-echo "[3/6] Disabling setup wizard..."
-mkdir -p /var/lib/jenkins
-echo "2.0" > /var/lib/jenkins/jenkins.install.InstallUtil.lastExecVersion
-echo "2.0" > /var/lib/jenkins/jenkins.install.UpgradeWizard.state
-
-# ── [4/6] SSH Key + Kustomize ──
-echo "[4/6] Fetching SSH key from SSM, installing kustomize..."
+# ── [3/4] Pre-place SSH Agent Key (from SSM) ────────────────────────────────
+# The SSH key is placed now so agents can connect once you configure
+# them in the Jenkins UI after initial setup.
+echo "[3/4] Fetching agent SSH key from SSM..."
 export AWS_DEFAULT_REGION="${var.aws_region}"
-
 JENKINS_SSH_KEY=$(aws ssm get-parameter \
   --name "/${var.cluster_name}/jenkins/agent-ssh-private-key" \
   --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo "")
@@ -248,78 +250,55 @@ if [ -n "$JENKINS_SSH_KEY" ]; then
   mkdir -p /var/lib/jenkins/.ssh
   printf '%s' "$JENKINS_SSH_KEY" > /var/lib/jenkins/.ssh/agent_key
   chmod 600 /var/lib/jenkins/.ssh/agent_key
+  chown -R jenkins:jenkins /var/lib/jenkins/.ssh
+  echo "[3/4] Agent SSH key saved to /var/lib/jenkins/.ssh/agent_key"
+else
+  echo "[3/4] No SSH key found in SSM (skipping — add manually later)."
 fi
 
-curl -sSfL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2F${var.kustomize_version}/kustomize_${var.kustomize_version}_linux_amd64.tar.gz" \
-  | tar xz -C /usr/local/bin
-chmod +x /usr/local/bin/kustomize
-
-# ── [5/6] Groovy Init Scripts — Security ──
-echo "[5/6] Writing Groovy init scripts..."
-INIT_DIR="/var/lib/jenkins/init.groovy.d"
-mkdir -p "$INIT_DIR"
-
-ADMIN_PASS=$(aws ssm get-parameter \
-  --name "/${var.cluster_name}/jenkins/admin-password" \
-  --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo "admin")
-mkdir -p /var/lib/jenkins/secrets
-printf '%s' "$ADMIN_PASS" > /var/lib/jenkins/secrets/.admin_pass
-chmod 600 /var/lib/jenkins/secrets/.admin_pass
-
-# Groovy 1: Create admin user + enable security (built-in classes only)
-cat > "$INIT_DIR/01-security.groovy" << 'GROOVYEOF'
-import jenkins.model.*
-import hudson.security.*
-def j = Jenkins.get()
-if (j.getSecurityRealm() instanceof HudsonPrivateSecurityRealm) {
-  println "[init] Security already configured"
-  return
-}
-def realm = new HudsonPrivateSecurityRealm(false)
-j.setSecurityRealm(realm)
-def pw = new File('/var/lib/jenkins/secrets/.admin_pass').text.trim()
-realm.createAccount("admin", pw)
-j.setAuthorizationStrategy(new FullControlOnceLoggedInAuthorizationStrategy())
-j.save()
-println "[init] Done: admin user created, login required"
-GROOVYEOF
-
-# Groovy 2: Set Jenkins URL from EC2 metadata (IMDSv2)
-cat > "$INIT_DIR/02-url.groovy" << 'GROOVYEOF'
-import jenkins.model.*
-def j = Jenkins.get()
-def c = j.getDescriptorByType(JenkinsLocationConfiguration.class)
-def tk = ["curl","-s","-X","PUT","http://169.254.169.254/latest/api/token","-H","X-aws-ec2-metadata-token-ttl-seconds: 21600"].execute().text.trim()
-def ip = ["curl","-s","http://169.254.169.254/latest/meta-data/public-ipv4","-H","X-aws-ec2-metadata-token: $tk"].execute().text.trim()
-if (ip ==~ /\d+\.\d+\.\d+\.\d+/) { c.setUrl("http://$ip:8080/"); println "[init] URL=$ip" }
-GROOVYEOF
-
-# Groovy 3: Disable built-in node executors
-cat > "$INIT_DIR/03-executors.groovy" << 'GROOVYEOF'
-import jenkins.model.*
-def j = Jenkins.get()
-if (j.getNumExecutors() != 0) { j.setNumExecutors(0); j.setMode(hudson.model.Node.Mode.EXCLUSIVE); j.save(); println "[init] Executors=0" }
-GROOVYEOF
-
-# Groovy 4: Self-cleanup
-cat > "$INIT_DIR/99-cleanup.groovy" << 'GROOVYEOF'
-def d = new File("/var/lib/jenkins/init.groovy.d")
-new File("/var/lib/jenkins/secrets/.admin_pass").delete()
-d.listFiles()?.each { it.delete() }
-println "[init] Cleanup done"
-GROOVYEOF
-
-# ── [6/6] Start Jenkins ──
-echo "[6/6] Starting Jenkins..."
+# ── [4/4] Start Jenkins — FULL SETUP WIZARD ─────────────────────────────────
+# IMPORTANT: No wizard bypass. No auto-admin creation. No Groovy init scripts.
+# Jenkins starts with the standard first-run wizard:
+#   1. Unlock Jenkins  → enter the initialAdminPassword
+#   2. Create Admin    → set your own username, password, full name & email
+#   3. Install Plugins → click "Install suggested plugins"
+#   4. Done!
+echo "[4/4] Starting Jenkins (full setup wizard enabled)..."
 chown -R jenkins:jenkins /var/lib/jenkins
 systemctl enable jenkins
 systemctl start jenkins
 
-# Use IMDSv2 for public IP
-TOKEN=$(curl -s -X PUT "http://169.254.169.254/latest/api/token" -H "X-aws-ec2-metadata-token-ttl-seconds: 21600" || echo "")
-PUBLIC_IP=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/public-ipv4 || echo "unknown")
-echo "=== DONE — http://$PUBLIC_IP:8080 | user: admin ==="
-echo "=== NEXT: Install plugins via Manage Jenkins > Plugins ==="
+# Wait for Jenkins to generate the initial admin password, then surface it
+echo "Waiting for initialAdminPassword to be generated..."
+for i in $(seq 1 30); do
+  if [ -f /var/lib/jenkins/secrets/initialAdminPassword ]; then
+    INIT_PASS=$(cat /var/lib/jenkins/secrets/initialAdminPassword)
+    TOKEN=$(curl -sf -X PUT "http://169.254.169.254/latest/api/token" \
+      -H "X-aws-ec2-metadata-token-ttl-seconds: 60" || echo "")
+    PUBLIC_IP=$(curl -sf -H "X-aws-ec2-metadata-token: $TOKEN" \
+      http://169.254.169.254/latest/meta-data/public-ipv4 || echo "YOUR_EC2_IP")
+    echo ""
+    echo "======================================================================"
+    echo "  JENKINS SETUP — ACTION REQUIRED"
+    echo ""
+    echo "  Browser URL : http://$PUBLIC_IP:8080"
+    echo ""
+    echo "  Initial Admin Password:"
+    echo "  $INIT_PASS"
+    echo ""
+    echo "  Steps:"
+    echo "  1. Open the URL above"
+    echo "  2. Paste the password to unlock Jenkins"
+    echo "  3. Create your admin user (name, password, email)"
+    echo "  4. Click 'Install suggested plugins'"
+    echo "  5. Jenkins is ready!"
+    echo "======================================================================"
+    break
+  fi
+  echo "  Attempt $i/30 — waiting 5s..."
+  sleep 5
+done
+echo "=== Bootstrap complete — $(date) ==="
 EOT
   )
 
